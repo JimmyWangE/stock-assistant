@@ -2,3 +2,6 @@
 __pycache__
 *.pyc
 .env
+dev
+requirements-dev.txt
+*.db

@@ -1,11 +1,35 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from sqlalchemy import text
 
 from app import llm
+from app.auth.router import router as auth_router
+from app.chat.router import router as chat_router
 from app.config import settings
 from app.db import engine, redis
+from app.models import Base
+from app.sessions.router import router as sessions_router
 
-app = FastAPI(title="A股对话式投研", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # 启动时建表（已存在则跳过）。上线后第一次改表结构前，需要换成迁移工具。
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
+
+app = FastAPI(
+    title="A股对话式投研",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
+app.include_router(auth_router)
+app.include_router(sessions_router)
+app.include_router(chat_router)
 
 
 @app.get("/api/health/live")

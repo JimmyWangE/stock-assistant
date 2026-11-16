@@ -34,6 +34,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://finance:${POSTGRES_PASSWORD}@db:5432/finance
       REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?请在 .env 中设置 SECRET_KEY}
       LLM_BASE_URL: ${LLM_BASE_URL:?请在 .env 中设置 LLM_BASE_URL}
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
       LLM_MODEL: ${LLM_MODEL:-}
