@@ -1,0 +1,28 @@
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """所有配置都来自环境变量，默认值对应 docker-compose.yml 里的服务名。"""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str = "postgresql+asyncpg://finance:finance@db:5432/finance"
+    redis_url: str = "redis://redis:6379/0"
+
+    # 自研模型：OpenAI 兼容接口
+    llm_base_url: str = ""  # 必须通过环境变量 LLM_BASE_URL 提供
+    llm_api_key_file: str = "/run/secrets/llm_api_key"
+    llm_model: str = ""  # 留空则启动后从 /v1/models 取第一个
+    llm_max_concurrency: int = 200
+
+    def read_llm_api_key(self) -> str:
+        """每次调用时读文件，密钥轮换后无需重启。读不到返回空串。"""
+        path = Path(self.llm_api_key_file)
+        if not path.is_file():
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+
+
+settings = Settings()
