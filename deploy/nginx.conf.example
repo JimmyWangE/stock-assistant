@@ -1,15 +1,16 @@
+# 站点配置参考。<...> 处按服务器实际情况替换；服务器上的真实配置不进仓库。
 server {
-    listen 80;
-    root /usr/share/nginx/html;
+    listen <对外端口>;
+    root <项目目录>/frontend/dist;
     index index.html;
 
     location /api/ {
-        proxy_pass http://backend:8000;
+        proxy_pass http://127.0.0.1:<后端端口>;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header Connection "";
-        # 流式回答：不缓冲，长连接不超时
+        # 流式回答必须关闭缓冲，否则文字会攒成一整段才显示；长回答不能被超时掐断
         proxy_buffering off;
         proxy_read_timeout 600s;
     }

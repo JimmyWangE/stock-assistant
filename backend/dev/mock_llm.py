@@ -1,4 +1,4 @@
-"""本地开发用的假模型服务：模拟 OpenAI 兼容接口的流式输出。不随镜像部署。
+"""本地开发用的假模型服务：模拟 OpenAI 兼容接口的流式输出。只在本地开发时使用。
 
 启动：uvicorn mock_llm:app --app-dir backend/dev --port 8001
 然后让后端的 LLM_BASE_URL 指向 http://127.0.0.1:8001/v1

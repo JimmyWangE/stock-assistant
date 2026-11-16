@@ -17,38 +17,53 @@ backend/            FastAPI 后端
   app/chat/         流式对话、并发排队
   app/sessions/     历史会话
   app/{tools,export}/   待实现：数据工具、PDF 导出
-  dev/mock_llm.py   本地开发用的假模型服务，不随镜像部署
-frontend/           Vue 3 + TypeScript 前端，nginx 提供静态文件并转发 /api
-docker-compose.yml  四个服务：db、redis、backend、web
+  dev/mock_llm.py   本地开发用的假模型服务
+frontend/           Vue 3 + TypeScript 前端
+deploy/             部署参考配置
 .env.example        配置模板
 docs/               项目总览、架构方案、进度记录
 ```
 
 ## 部署（服务器）
 
-前提：Linux，已安装 Docker 和 Docker Compose 插件，能访问内网的模型服务，并知道模型服务地址和模型密钥文件在服务器上的路径（这两项不写在仓库里，由部署任务的下达方另行告知）。
+不使用 Docker。服务器上由 systemd 管理四个服务，均为本项目专用实例：
 
-1. 获取代码：首次 `git clone https://github.com/JimmyWangE/stock-assistant.git && cd stock-assistant`；之后更新用 `git pull`。
-2. 生成配置（仅首次）：`cp .env.example .env`，在 `.env` 里填写四项必填值：`POSTGRES_PASSWORD`（随机串即可）、`SECRET_KEY`（用 `openssl rand -hex 32` 生成）、`LLM_BASE_URL`（模型服务地址，以 `/v1` 结尾）、`LLM_API_KEY_FILE`（密钥文件的绝对路径）。缺任何一项 `docker compose` 会直接报错并指出缺的是哪项。拉取依赖慢时，取消 `PIP_INDEX_URL`、`NPM_REGISTRY` 两行示例的注释。`.env` 不进仓库，`git pull` 不会覆盖它。
-3. 构建并启动：`docker compose up -d --build`（更新代码后同样执行这一条）
-4. 验证依赖：`curl -s http://localhost:8080/api/health`
-5. 验证功能：浏览器打开 `http://<服务器地址>:8080`，注册一个账号，提一个问题，回答应逐字出现。
+| 服务 | 作用 |
+|---|---|
+| `stock-assistant-backend` | 后端（uvicorn，仅监听本机） |
+| `stock-assistant-nginx` | 对外提供网页，并把 `/api/` 转给后端 |
+| `stock-assistant-postgres` | 数据库（仅监听本机） |
+| `stock-assistant-redis` | 缓存（仅监听本机） |
 
-**启动成功的判定**：返回的 JSON 中 `status` 为 `ok`，且 `database`、`redis`、`llm` 三项的 `status` 都是 `ok`，`llm.api_key_loaded` 为 `true`，`llm.models` 列出了模型名。
+具体目录、端口、模型服务地址、密钥路径都不写在仓库里，以服务器上的 `.env` 和服务单元文件为准。`.env` 各项含义见 [.env.example](.env.example)，nginx 站点配置参考 [deploy/nginx.conf.example](deploy/nginx.conf.example)。
+
+### 更新代码
+
+在项目目录下执行：
+
+1. `git pull`
+2. 后端依赖：`<虚拟环境>/bin/pip install -r backend/requirements.txt`
+3. 前端构建：`cd frontend && npm ci && npm run build`
+4. 重启后端：`systemctl restart stock-assistant-backend`（数据表会在启动时自动补建）
+5. 验证：`curl -s http://localhost:<对外端口>/api/health`
+
+只改了前端时可跳过第 2、4 步；只改了后端时可跳过第 3 步。
+
+**成功的判定**：返回的 JSON 中 `status` 为 `ok`，且 `database`、`redis`、`llm` 三项的 `status` 都是 `ok`，`llm.api_key_loaded` 为 `true`，`llm.models` 列出了模型名。
 
 **常见失败**
 
 | 现象 | 原因与处理 |
 |---|---|
-| `docker compose up` 报 secret 文件不存在 | 密钥文件路径不对，在 `.env` 里改 `LLM_API_KEY_FILE` |
-| `llm.api_key_loaded` 为 `false` | 密钥文件为空或容器内无法读取，检查文件内容和权限 |
+| `llm.api_key_loaded` 为 `false` | `.env` 的 `LLM_API_KEY_FILE` 路径不对、文件为空，或后端进程的账户没有读权限 |
 | `llm.status` 为 `error` 且提示 401 | 密钥不正确 |
-| `llm.status` 为 `error` 且提示连接失败或超时 | 容器内访问不到模型服务，在宿主机上用 `curl <LLM_BASE_URL>/models` 确认 |
-| 8080 端口被占用 | 在 `.env` 里改 `WEB_PORT` |
+| `llm.status` 为 `error` 且提示连接失败或超时 | 访问不到模型服务，用 `curl <LLM_BASE_URL>/models` 确认 |
+| 回答不是逐字出现，而是等很久后整段显示 | nginx 没有关闭缓冲，对照 `deploy/nginx.conf.example` 检查 `proxy_buffering off` |
+| 网页打开是旧版本 | 前端没有重新构建，或 nginx 指向的不是 `frontend/dist` |
 
-注意：不要把密钥内容写进 `.env`、日志或任何回复里，只通过文件路径引用。本仓库是公开的，模型服务地址、密钥路径、`.env` 都不要提交。
+注意：不要把密钥内容写进 `.env`、日志或任何回复里，只通过文件路径引用。模型服务地址、密钥路径、`.env` 都不要提交。
 
-## 本地开发（不用 Docker）
+## 本地开发
 
 ```bash
 cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt

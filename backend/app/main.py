@@ -34,7 +34,7 @@ app.include_router(chat_router)
 
 @app.get("/api/health/live")
 async def live() -> dict[str, str]:
-    """进程存活检查，供容器健康检查使用，不访问任何依赖。"""
+    """进程存活检查，不访问任何依赖。"""
     return {"status": "ok"}
 
 
