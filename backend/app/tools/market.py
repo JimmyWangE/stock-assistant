@@ -289,7 +289,24 @@ async def get_stock_quote(symbol: str) -> ToolResult:
             f"成交量 {quote['volume_lots']:.0f} 手，成交额 {quote['amount_yi']:.2f} 亿元"
         )
     lines.append(_cite(quote["source"], f"{name}（{code}）行情", quote["url"](code)))
-    return ToolResult(text="\n".join(lines))
+    if price <= 0:
+        return ToolResult(text="\n".join(lines))
+    # 行情卡片：由页面直接展示，数字不经模型转述
+    card = {
+        "type": "quote",
+        "name": name,
+        "code": code,
+        "price": price,
+        "prev_close": prev,
+        "open": quote["open"],
+        "high": quote["high"],
+        "low": quote["low"],
+        "volume_lots": quote["volume_lots"],
+        "amount_yi": quote["amount_yi"],
+        "as_of": f"{quote['time']:%Y-%m-%d %H:%M:%S}",
+        "source": {"name": quote["source"], "url": quote["url"](code)},
+    }
+    return ToolResult(text="\n".join(lines), blocks=[card])
 
 
 async def get_kline(symbol: str, period: str = "daily", count: int = 120) -> ToolResult:

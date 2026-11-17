@@ -1,15 +1,30 @@
 <script setup lang="ts">
-import { MoreFilled, Plus, Promotion, Search, SwitchButton } from '@element-plus/icons-vue'
+import {
+  DataAnalysis,
+  DocumentCopy,
+  Filter,
+  MoreFilled,
+  Notebook,
+  Plus,
+  Promotion,
+  Reading,
+  Search,
+  TrendCharts,
+  Wallet,
+} from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
+import AppHeader from '../components/AppHeader.vue'
 import BrandMark from '../components/BrandMark.vue'
 import DataTable from '../components/DataTable.vue'
 import KlineChart from '../components/KlineChart.vue'
-import MarketBar from '../components/MarketBar.vue'
+import MarketPanel from '../components/MarketPanel.vue'
+import QuoteCard from '../components/QuoteCard.vue'
+import { startBoard, stopBoard } from '../market'
 import { renderMarkdown } from '../markdown'
 
 const route = useRoute()
@@ -25,14 +40,44 @@ const status = ref('')
 const scroller = ref<HTMLElement>()
 let controller: AbortController | null = null
 
-// 首版要支持的五类问题，各给一个示例，点一下直接提问
-const examples = [
-  { type: '个股分析', text: '从基本面和估值角度分析一下贵州茅台' },
-  { type: '财报解读', text: '解读宁德时代最近一期财报的要点' },
-  { type: '行情查询', text: '比亚迪现在的股价和今天的涨跌幅是多少' },
-  { type: '条件选股', text: '筛选市盈率低于 15、近三年 ROE 都高于 15% 的股票' },
-  { type: '政策与新闻', text: '今天有哪些影响 A 股的重要政策和新闻' },
+// 首页的能力卡片：点一下直接用示例提问。条件选股尚未上线，只展示不可点
+const abilities = [
+  { icon: TrendCharts, name: '行情查询', desc: '最新价、涨跌幅、成交，数据到秒', ask: '比亚迪现在的股价和今天的涨跌幅是多少' },
+  { icon: DataAnalysis, name: 'K 线走势', desc: '分钟、日、周、月线与均线解读', ask: '看一下宁德时代的日K线，分析近期走势' },
+  { icon: Wallet, name: '财报解读', desc: '营收、利润、毛利率、ROE 逐期对比', ask: '解读一下贵州茅台最近的财报' },
+  { icon: Notebook, name: '个股分析', desc: '行情、财务、新闻多维度综合', ask: '从基本面和走势两方面分析一下比亚迪' },
+  { icon: Reading, name: '政策与新闻', desc: '部委官网原文与财经快讯', ask: '今天有哪些影响 A 股的重要政策和新闻' },
+  { icon: Filter, name: '条件选股', desc: '按估值、财务、行情等条件筛选', ask: '' },
 ]
+
+const greeting = computed(() => {
+  // 按北京时间问候，和行情时间保持一致，不随用户电脑的时区变化
+  const hour = (new Date().getUTCHours() + 8) % 24
+  const part = hour < 6 ? '夜深了' : hour < 12 ? '上午好' : hour < 18 ? '下午好' : '晚上好'
+  return `${part}，${currentUser.value?.username ?? ''}`
+})
+
+/** 复制回答原文。页面可能通过 http 访问，那时浏览器不提供剪贴板接口，退回到旧办法。 */
+async function copyText(text: string): Promise<void> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      area.remove()
+      if (!ok) throw new Error('copy failed')
+    }
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文字复制')
+  }
+}
 
 function goLogin(): void {
   setUser(null)
@@ -231,213 +276,199 @@ async function logout(): Promise<void> {
   }
 }
 
-onMounted(loadConversations)
+onMounted(() => {
+  loadConversations()
+  startBoard()
+})
 onBeforeUnmount(() => {
   controller?.abort()
   clearTimeout(searchTimer)
+  stopBoard()
 })
 </script>
 
 <template>
   <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <BrandMark :size="30" />
-        <div>
-          <div class="brand-name">A股投研助手</div>
-          <div class="brand-sub">EQUITY RESEARCH</div>
-        </div>
-      </div>
-      <el-button class="new-chat" :icon="Plus" @click="router.push('/')">新对话</el-button>
+    <AppHeader @logout="logout" />
 
-      <el-input
-        v-model="keyword"
-        class="search"
-        :prefix-icon="Search"
-        placeholder="搜索标题或内容"
-        maxlength="100"
-        clearable
-      />
+    <div class="body">
+      <aside class="sidebar">
+        <el-button class="new-chat" type="primary" :icon="Plus" @click="router.push('/')">
+          新对话
+        </el-button>
+        <el-input
+          v-model="keyword"
+          class="search"
+          :prefix-icon="Search"
+          placeholder="搜索标题或内容"
+          maxlength="100"
+          clearable
+        />
 
-      <div class="history-label">历史对话</div>
-      <nav class="history">
-        <p v-if="!conversations.length" class="history-empty">
-          {{ keyword.trim() ? '没有找到相关对话' : '还没有历史对话' }}
-        </p>
-        <div
-          v-for="c in conversations"
-          :key="c.id"
-          class="history-item"
-          :class="{ active: c.id === currentId }"
-        >
-          <router-link :to="`/c/${c.id}`" class="history-title" :title="c.title">
-            {{ c.title }}
-          </router-link>
-          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, c)">
-            <button type="button" class="history-more" :aria-label="`${c.title} 的更多操作`">
-              <el-icon><MoreFilled /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                <el-dropdown-item command="delete" class="danger-item">删除</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </nav>
-
-      <div class="account">
-        <span class="avatar" aria-hidden="true">{{ currentUser?.username.slice(0, 1).toUpperCase() }}</span>
-        <span class="username" :title="currentUser?.username">{{ currentUser?.username }}</span>
-        <el-button text :icon="SwitchButton" @click="logout">退出</el-button>
-      </div>
-    </aside>
-
-    <main class="main">
-      <MarketBar />
-      <div ref="scroller" class="scroller">
-        <div class="column">
-          <section v-if="!messages.length" class="welcome">
-            <div class="welcome-mark"><BrandMark :size="40" /></div>
-            <h1>A 股投研，从一个问题开始</h1>
-            <p>行情、K 线、财报、新闻与官方政策，均取自实时数据并附来源。</p>
-            <div class="examples">
-              <button v-for="ex in examples" :key="ex.type" type="button" @click="send(ex.text)">
-                <span class="example-type">{{ ex.type }}</span>
-                <span>{{ ex.text }}</span>
+        <div class="history-label">历史对话</div>
+        <nav class="history">
+          <p v-if="!conversations.length" class="history-empty">
+            {{ keyword.trim() ? '没有找到相关对话' : '还没有历史对话' }}
+          </p>
+          <div
+            v-for="c in conversations"
+            :key="c.id"
+            class="history-item"
+            :class="{ active: c.id === currentId }"
+          >
+            <router-link :to="`/c/${c.id}`" class="history-title" :title="c.title">
+              {{ c.title }}
+            </router-link>
+            <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, c)">
+              <button type="button" class="history-more" :aria-label="`${c.title} 的更多操作`">
+                <el-icon><MoreFilled /></el-icon>
               </button>
-            </div>
-          </section>
-
-          <template v-for="(m, i) in messages" :key="i">
-            <div v-if="m.role === 'user'" class="message user">
-              <div class="bubble">{{ m.content }}</div>
-            </div>
-            <div v-else class="message assistant" :class="{ failed: m.failed }">
-              <div class="assistant-head"><BrandMark :size="18" />投研助手</div>
-              <template v-for="(block, bi) in m.blocks ?? []" :key="bi">
-                <KlineChart v-if="block.type === 'kline'" :block="block" />
-                <DataTable v-else-if="block.type === 'table'" :block="block" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                  <el-dropdown-item command="delete" class="danger-item">删除</el-dropdown-item>
+                </el-dropdown-menu>
               </template>
-              <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
-              <div v-if="m.content" class="markdown" v-html="renderMarkdown(m.content)" />
-              <!-- 最后一条回答在等待时显示当前状态：发送中、排队、思考、查询数据 -->
-              <p
-                v-if="streaming && i === messages.length - 1 && (status || !m.content)"
-                class="status"
-              >
-                <span class="dot" />{{ status || '正在思考…' }}
-              </p>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <footer class="composer">
-        <div class="column">
-          <div class="input-row">
-            <el-input
-              v-model="input"
-              type="textarea"
-              resize="none"
-              :autosize="{ minRows: 1, maxRows: 6 }"
-              :maxlength="4000"
-              placeholder="输入问题，回车发送，Shift + 回车换行"
-              @keydown.enter="onEnter"
-            />
-            <el-button v-if="streaming" class="action" @click="controller?.abort()">停止</el-button>
-            <el-button
-              v-else
-              class="action"
-              type="primary"
-              :icon="Promotion"
-              :disabled="!input.trim()"
-              @click="send()"
-            >
-              发送
-            </el-button>
+            </el-dropdown>
           </div>
-          <p class="disclaimer">内容由 AI 生成，仅供内部研究参考，不构成投资建议。</p>
+        </nav>
+        <p class="sidebar-foot">会话在最后一次对话 30 天后自动删除</p>
+      </aside>
+
+      <main class="main">
+        <div ref="scroller" class="scroller">
+          <div class="column">
+            <section v-if="!messages.length" class="welcome">
+              <p class="greeting">{{ greeting }}</p>
+              <h1>今天想研究什么？</h1>
+              <p class="lead">行情、K 线、财报、新闻与官方政策均取自实时数据，并附来源链接。</p>
+              <div class="abilities">
+                <button
+                  v-for="a in abilities"
+                  :key="a.name"
+                  type="button"
+                  :disabled="!a.ask"
+                  @click="send(a.ask)"
+                >
+                  <span class="ability-icon"><el-icon><component :is="a.icon" /></el-icon></span>
+                  <span class="ability-name">
+                    {{ a.name }}
+                    <span v-if="!a.ask" class="soon">即将上线</span>
+                  </span>
+                  <span class="ability-desc">{{ a.desc }}</span>
+                  <span v-if="a.ask" class="ability-ask">“{{ a.ask }}”</span>
+                </button>
+              </div>
+            </section>
+
+            <template v-for="(m, i) in messages" :key="i">
+              <div v-if="m.role === 'user'" class="message user">
+                <div class="bubble">{{ m.content }}</div>
+              </div>
+              <div v-else class="message assistant" :class="{ failed: m.failed }">
+                <div class="assistant-head">
+                  <BrandMark :size="18" />投研助手
+                  <button
+                    v-if="m.content && !(streaming && i === messages.length - 1)"
+                    type="button"
+                    class="copy"
+                    @click="copyText(m.content)"
+                  >
+                    <el-icon><DocumentCopy /></el-icon>复制
+                  </button>
+                </div>
+                <template v-for="(block, bi) in m.blocks ?? []" :key="bi">
+                  <QuoteCard v-if="block.type === 'quote'" :block="block" />
+                  <KlineChart v-else-if="block.type === 'kline'" :block="block" />
+                  <DataTable v-else-if="block.type === 'table'" :block="block" />
+                </template>
+                <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
+                <div v-if="m.content" class="markdown" v-html="renderMarkdown(m.content)" />
+                <!-- 最后一条回答在等待时显示当前状态：发送中、排队、思考、查询数据 -->
+                <p
+                  v-if="streaming && i === messages.length - 1 && (status || !m.content)"
+                  class="status"
+                >
+                  <span class="dot" />{{ status || '正在思考…' }}
+                </p>
+              </div>
+            </template>
+          </div>
         </div>
-      </footer>
-    </main>
+
+        <footer class="composer">
+          <div class="column">
+            <div class="input-row">
+              <el-input
+                v-model="input"
+                type="textarea"
+                resize="none"
+                :autosize="{ minRows: 1, maxRows: 6 }"
+                :maxlength="4000"
+                placeholder="输入股票名称、代码或问题，回车发送，Shift + 回车换行"
+                @keydown.enter="onEnter"
+              />
+              <el-button v-if="streaming" class="action" @click="controller?.abort()">
+                停止
+              </el-button>
+              <el-button
+                v-else
+                class="action"
+                type="primary"
+                :icon="Promotion"
+                :disabled="!input.trim()"
+                @click="send()"
+              >
+                发送
+              </el-button>
+            </div>
+            <p class="disclaimer">内容由 AI 生成，仅供内部研究参考，不构成投资建议。</p>
+          </div>
+        </footer>
+      </main>
+
+      <!-- 右侧市场看板；点"AI 解读"直接就这条内容提问 -->
+      <MarketPanel class="board" @ask="send" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .layout {
   display: flex;
+  flex-direction: column;
   height: 100%;
-  min-width: 720px;
+  min-width: 760px;
   background: var(--surface-alt);
 }
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 
-/* 左侧：深色侧栏，历史会话 */
+/* 左侧：历史会话 */
 .sidebar {
   display: flex;
   flex-direction: column;
-  width: 264px;
+  width: 248px;
   flex-shrink: 0;
-  padding: 18px 12px 12px;
+  padding: 14px 12px 10px;
   box-sizing: border-box;
-  background: var(--navy);
-  color: var(--on-navy);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 8px 18px;
-  color: #fff;
-}
-.brand-name {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: 0.5px;
-}
-.brand-sub {
-  color: var(--gold);
-  font-size: 10px;
-  line-height: 1.4;
-  letter-spacing: 2px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
 }
 .new-chat {
   width: 100%;
   height: 36px;
   margin-bottom: 10px;
-  border-color: var(--navy-line);
-  background: var(--navy-soft);
-  color: #fff;
-}
-.new-chat:hover,
-.new-chat:focus-visible {
-  border-color: var(--gold);
-  background: var(--navy-soft);
-  color: var(--gold);
 }
 .search {
   margin-bottom: 14px;
 }
-/* 深色背景上的搜索框：改写组件库的颜色变量 */
-.search :deep(.el-input__wrapper) {
-  background: transparent;
-  box-shadow: 0 0 0 1px var(--navy-line) inset;
-}
-.search :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px var(--gold) inset;
-}
-.search :deep(.el-input__inner) {
-  color: #fff;
-}
-.search :deep(.el-input__inner::placeholder),
-.search :deep(.el-input__icon) {
-  color: var(--on-navy-muted);
-}
 .history-label {
   padding: 0 10px 6px;
-  color: var(--on-navy-muted);
+  color: var(--text-muted);
   font-size: 12px;
   letter-spacing: 1px;
 }
@@ -445,11 +476,10 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-color: var(--navy-line) transparent;
 }
 .history-empty {
   margin: 8px 10px;
-  color: var(--on-navy-muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 .history-item {
@@ -463,7 +493,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   padding: 7px 4px 7px 10px;
-  color: var(--on-navy);
+  color: var(--text);
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
@@ -480,7 +510,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 4px;
   background: none;
-  color: var(--on-navy-muted);
+  color: var(--text-muted);
   cursor: pointer;
   /* 平时隐藏，悬停、当前会话或键盘聚焦时出现 */
   opacity: 0;
@@ -491,57 +521,28 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 .history-more:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: rgba(11, 29, 51, 0.08);
+  color: var(--text);
 }
 .history-item:hover {
-  background: var(--navy-soft);
+  background: var(--surface-alt);
 }
 .history-item.active {
-  background: var(--navy-soft);
-  box-shadow: inset 2px 0 0 var(--gold);
+  background: var(--brand-soft);
+  box-shadow: inset 2px 0 0 var(--brand);
 }
 .history-item.active .history-title {
-  color: #fff;
+  color: var(--brand);
   font-weight: 500;
 }
-.account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 0 0 8px;
-  border-top: 1px solid var(--navy-line);
-}
-.avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--navy-line);
-  color: #fff;
+.sidebar-foot {
+  margin: 8px 10px 0;
+  color: var(--text-muted);
   font-size: 12px;
-  font-weight: 600;
-}
-.username {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.account .el-button {
-  color: var(--on-navy-muted);
-}
-.account .el-button:hover {
-  background: var(--navy-soft);
-  color: #fff;
+  line-height: 1.5;
 }
 
-/* 右侧：对话 */
+/* 中间：对话 */
 .main {
   display: flex;
   flex: 1;
@@ -559,16 +560,25 @@ onBeforeUnmount(() => {
   padding: 0 24px;
 }
 .scroller .column {
-  padding-top: 24px;
+  padding-top: 20px;
   padding-bottom: 16px;
 }
 
-.welcome {
-  padding-top: 8vh;
+/* 右侧看板：窗口不够宽时让位给对话 */
+@media (max-width: 1240px) {
+  .board {
+    display: none;
+  }
 }
-.welcome-mark {
-  margin-bottom: 14px;
-  color: var(--navy);
+
+/* 首页工作台 */
+.welcome {
+  padding-top: 4vh;
+}
+.greeting {
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 .welcome h1 {
   margin: 0;
@@ -577,44 +587,88 @@ onBeforeUnmount(() => {
   line-height: 1.3;
   letter-spacing: 0.5px;
 }
-.welcome p {
-  margin: 8px 0 26px;
+.lead {
+  margin: 6px 0 22px;
   color: var(--text-muted);
 }
-.examples {
+.abilities {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
-.examples button {
+@media (max-width: 1040px) {
+  .abilities {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.abilities button {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 13px 16px;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
-  line-height: 1.5;
   text-align: left;
   cursor: pointer;
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
 }
-.examples button:hover,
-.examples button:focus-visible {
+.abilities button:hover:not(:disabled),
+.abilities button:focus-visible {
   border-color: var(--brand);
-  box-shadow: 0 2px 10px rgba(11, 29, 51, 0.08);
+  box-shadow: 0 4px 14px rgba(11, 29, 51, 0.08);
   outline: none;
 }
-.example-type {
+.abilities button:disabled {
+  background: transparent;
+  cursor: default;
+}
+.ability-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--brand-soft);
   color: var(--brand);
-  font-size: 12px;
+  font-size: 18px;
+}
+.ability-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--navy);
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 1px;
+}
+.soon {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.ability-desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ability-ask {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  width: 100%;
+  color: var(--brand);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .message {
@@ -635,7 +689,7 @@ onBeforeUnmount(() => {
 }
 /* 回答做成一张"报告卡片" */
 .message.assistant {
-  padding: 16px 20px 18px;
+  padding: 14px 20px 18px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -653,6 +707,28 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.5px;
+}
+.copy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.copy:hover,
+.copy:focus-visible {
+  background: var(--surface-alt);
+  color: var(--brand);
+  outline: none;
 }
 .message.failed .markdown {
   color: var(--danger);
@@ -689,7 +765,7 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   gap: 8px;
   padding: 8px 8px 8px 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--surface);
   box-shadow: 0 2px 12px rgba(11, 29, 51, 0.06);

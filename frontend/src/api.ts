@@ -7,10 +7,46 @@ export interface User {
 
 /** 大盘指数。percent 是涨跌幅（百分数）。 */
 export interface MarketIndex {
+  code: string
   name: string
   price: number
+  prev_close: number
   change: number
   percent: number
+  amount_yi: number
+}
+
+export interface SectorRow {
+  name: string
+  percent: number
+  leader: string
+}
+
+export interface NewsRow {
+  title: string
+  url: string
+  time: string
+  source?: string
+}
+
+/** 市场看板快照。各板块取不到数据时为空数组或 null，页面据此隐藏。 */
+export interface MarketBoard {
+  indices: MarketIndex[]
+  as_of: string
+  session: string
+  /** 各指数当天的分时价格，按指数代码取 */
+  sparks: Record<string, number[]>
+  breadth: {
+    up: number
+    down: number
+    flat: number
+    limit_up: number
+    limit_down: number
+    as_of: string
+  } | null
+  sectors: { top: SectorRow[]; bottom: SectorRow[] } | null
+  headlines: NewsRow[]
+  policies: NewsRow[]
 }
 
 export interface ConversationSummary {
@@ -38,8 +74,24 @@ export interface TableBlock {
   source: { name: string; url: string }
 }
 
+/** 行情卡片。 */
+export interface QuoteBlock {
+  type: 'quote'
+  name: string
+  code: string
+  price: number
+  prev_close: number
+  open: number
+  high: number
+  low: number
+  volume_lots: number
+  amount_yi: number
+  as_of: string
+  source: { name: string; url: string }
+}
+
 /** 随回答展示、不经过模型的内容块。 */
-export type Block = KlineBlock | TableBlock
+export type Block = KlineBlock | TableBlock | QuoteBlock
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -101,7 +153,7 @@ export const api = {
   register: (username: string, password: string) =>
     request<User>('POST', '/api/auth/register', { username, password }),
   logout: () => request<unknown>('POST', '/api/auth/logout'),
-  indices: () => request<{ indices: MarketIndex[]; as_of: string }>('GET', '/api/market/indices'),
+  board: () => request<MarketBoard>('GET', '/api/market/board'),
   /** 带关键词时只返回标题或正文含该词的会话。 */
   listConversations: (keyword = '') =>
     request<ConversationSummary[]>(
