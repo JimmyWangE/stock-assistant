@@ -7,3 +7,5 @@ redis==8.1.0
 httpx==0.28.1
 bcrypt==5.0.0
 PyJWT==2.15.1
+akshare==1.20.65
+alembic==1.20.1

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -10,7 +10,7 @@ def now() -> datetime:
 
 
 class Base(DeclarativeBase):
-    pass
+    """改动任何表结构后，都要在 migrations/versions/ 里加一个迁移文件。"""
 
 
 class User(Base):
@@ -43,4 +43,6 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String(16))  # user / assistant
     content: Mapped[str] = mapped_column(Text)
+    # 随回答展示的图表、表格的原始数据。存数据而不是图片：重开会话时按原样重画，即生成时的快照
+    blocks: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

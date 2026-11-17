@@ -2,7 +2,7 @@
 
 内部团队使用的 A 股对话式投研网页应用。需求、架构和进度见 [docs](docs/)。
 
-当前阶段：已有注册登录、对话页（流式回答）和历史会话列表。尚未接入行情、财报、新闻数据，模型暂时只凭自身知识回答。
+当前阶段：已有注册登录、对话页（流式回答）、历史会话列表，以及行情查询和 K 线图（模型通过工具调用取数）。财报、新闻政策、条件选股的数据尚未接入。
 
 ## 目录
 
@@ -16,7 +16,9 @@ backend/            FastAPI 后端
   app/auth/         注册、登录
   app/chat/         流式对话、并发排队
   app/sessions/     历史会话
-  app/{tools,export}/   待实现：数据工具、PDF 导出
+  app/tools/        模型可调用的数据工具：行情、K 线（经 AkShare 取自新浪财经）
+  app/export/       待实现：PDF 导出
+  migrations/       数据库表结构的迁移文件，后端启动时自动执行
   dev/mock_llm.py   本地开发用的假模型服务
 frontend/           Vue 3 + TypeScript 前端
 deploy/             部署参考配置
@@ -44,7 +46,7 @@ docs/               项目总览、架构方案、进度记录
 1. `git pull`
 2. 后端依赖：`backend/.venv/bin/pip install -r backend/requirements.txt`
 3. 前端构建：`cd frontend && npm ci && npm run build`
-4. 重启后端：`systemctl restart stock-assistant-backend`（数据表会在启动时自动补建）
+4. 重启后端：`systemctl restart stock-assistant-backend`（数据库表结构会在启动时自动升级到最新）
 5. 验证：`curl -s http://localhost:<对外端口>/api/health`
 
 只改了前端时可跳过第 2、4 步；只改了后端时可跳过第 3 步。
@@ -59,6 +61,7 @@ docs/               项目总览、架构方案、进度记录
 | `llm.status` 为 `error` 且提示 401 | 密钥不正确 |
 | `llm.status` 为 `error` 且提示连接失败或超时 | 访问不到模型服务，用 `curl <LLM_BASE_URL>/models` 确认 |
 | 回答不是逐字出现，而是等很久后整段显示 | nginx 没有关闭缓冲，对照 `deploy/nginx.conf.example` 检查 `proxy_buffering off` |
+| 行情或 K 线问题回答"数据未获取" | 后端访问不到外网的行情数据源（新浪财经），检查服务器出网 |
 | 网页打开是旧版本 | 前端没有重新构建，或 nginx 指向的不是 `frontend/dist` |
 
 注意：不要把密钥内容写进 `.env`、日志或任何回复里，只通过文件路径引用。模型服务地址、密钥路径、`.env` 都不要提交。

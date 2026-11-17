@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,16 +10,19 @@ from app.auth.router import router as auth_router
 from app.chat.router import router as chat_router
 from app.config import settings
 from app.db import engine, redis
-from app.models import Base
+from app.migrate import upgrade_database
 from app.sessions.router import router as sessions_router
+from app.tools import market
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    # 启动时建表（已存在则跳过）。上线后第一次改表结构前，需要换成迁移工具。
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # 启动时把数据库表结构升级到最新。迁移工具是同步的，放到线程里跑
+    await asyncio.to_thread(upgrade_database)
+    # 后台预热行情工具要用的股票名称表，不阻塞启动
+    warm_up = asyncio.create_task(market.warm_up())
     yield
+    warm_up.cancel()
 
 
 app = FastAPI(

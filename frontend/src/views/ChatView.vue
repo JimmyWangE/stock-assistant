@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
+import KlineChart from '../components/KlineChart.vue'
 import { renderMarkdown } from '../markdown'
 
 const route = useRoute()
@@ -117,6 +118,9 @@ async function send(text = input.value): Promise<void> {
           status.value = ''
           reply.content += data.text
           scrollToBottom()
+        } else if (event === 'block') {
+          ;(reply.blocks ??= []).push(data)
+          scrollToBottom()
         } else if (event === 'error') {
           reply.failed = true
           if (!reply.content) reply.content = data.message
@@ -132,7 +136,7 @@ async function send(text = input.value): Promise<void> {
       if (e instanceof ApiError && e.status === 401) goLogin()
     }
   } finally {
-    if (signal.aborted && !reply.content) reply.content = '（已停止）'
+    if (signal.aborted && !reply.content && !reply.blocks?.length) reply.content = '（已停止）'
     streaming.value = false
     status.value = ''
     controller = null
@@ -207,12 +211,18 @@ onBeforeUnmount(() => controller?.abort())
               <div class="bubble">{{ m.content }}</div>
             </div>
             <div v-else class="message assistant" :class="{ failed: m.failed }">
-              <!-- 最后一条回答还没出字时，显示当前状态（发送中、排队、思考） -->
-              <p v-if="!m.content && streaming && i === messages.length - 1" class="status">
+              <template v-for="(block, bi) in m.blocks ?? []" :key="bi">
+                <KlineChart v-if="block.type === 'kline'" :block="block" />
+              </template>
+              <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
+              <div v-if="m.content" class="markdown" v-html="renderMarkdown(m.content)" />
+              <!-- 最后一条回答在等待时显示当前状态：发送中、排队、思考、查询数据 -->
+              <p
+                v-if="streaming && i === messages.length - 1 && (status || !m.content)"
+                class="status"
+              >
                 <span class="dot" />{{ status || '正在思考…' }}
               </p>
-              <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
-              <div v-else class="markdown" v-html="renderMarkdown(m.content)" />
             </div>
           </template>
         </div>

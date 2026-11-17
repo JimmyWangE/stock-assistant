@@ -11,9 +11,22 @@ export interface ConversationSummary {
   updated_at: string
 }
 
+/** K 线图数据。bars 每根为 [时间, 开, 收, 低, 高, 成交量（股）]。 */
+export interface KlineBlock {
+  type: 'kline'
+  title: string
+  as_of: string
+  source: { name: string; url: string }
+  bars: [string, number, number, number, number, number][]
+}
+
+/** 随回答展示、不经过模型的内容块。以后的财务图表、数据表格也加在这里。 */
+export type Block = KlineBlock
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  blocks?: Block[] | null
   failed?: boolean
 }
 
@@ -74,6 +87,7 @@ export type ChatEvent =
   | { event: 'meta'; data: { conversation_id: string; title: string } }
   | { event: 'status'; data: { text: string } }
   | { event: 'delta'; data: { text: string } }
+  | { event: 'block'; data: Block }
   | { event: 'error'; data: { message: string } }
   | { event: 'done'; data: Record<string, never> }
 

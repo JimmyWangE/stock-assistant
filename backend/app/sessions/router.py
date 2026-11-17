@@ -21,6 +21,7 @@ class ConversationOut(BaseModel):
 class MessageOut(BaseModel):
     role: str
     content: str
+    blocks: list[dict] | None = None
 
 
 class ConversationDetail(ConversationOut):

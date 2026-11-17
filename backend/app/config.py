@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     llm_context_tokens: int = 8192
     # 为回答预留的 token 数；历史消息只能使用剩余部分
     llm_reserved_output_tokens: int = 2000
+    # 为工具定义和工具返回的数据预留的 token 数
+    llm_reserved_tool_tokens: int = 1500
 
     def read_llm_api_key(self) -> str:
         """每次调用时读文件，密钥轮换后无需重启。读不到返回空串。"""

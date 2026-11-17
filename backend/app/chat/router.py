@@ -2,6 +2,9 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
+from datetime import datetime
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -14,15 +17,23 @@ from app.db import SessionLocal
 from app.models import Conversation, Message, User, now
 from app.security import current_user
 from app.sessions.router import get_owned_conversation
+from app.tools.registry import STATUS, TOOLS, run_tool
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["对话"])
 
-SYSTEM_PROMPT = (
-    "你是面向内部投研团队的 A 股投研助手，用简体中文回答，表达专业、简洁，适合时用 Markdown 表格和列表。"
-    "当前系统尚未接入行情、财报和新闻数据源：涉及具体的最新股价、财务数字或当日新闻时，"
-    "必须明确说明暂时无法获取实时数据，不得编造数字。"
-)
+SYSTEM_PROMPT = """你是面向内部投研团队的 A 股投研助手，用简体中文回答，表达专业、简洁，适合时用 Markdown 表格和列表。
+
+数据规则：
+- 涉及股价、涨跌幅、成交、K 线、走势时，必须先调用工具取数，不得凭记忆给出数字。
+- 引用工具数据时，写明数据时间，并在回答末尾用 Markdown 链接列出来源。
+- K 线图由系统自动展示在回答上方，不要用文字画图，也不要罗列全部 K 线数据，只做解读。
+- 工具返回"数据未获取"时，如实告诉用户哪些数据没有取到，再基于已有信息作答，不得编造。
+- 财报、新闻政策、条件选股的数据工具尚未接入：遇到这类问题，说明暂时无法获取相关数据，不得编造具体数字或新闻。"""
+
+# 一次回答里最多让模型调用几轮工具，防止模型反复调用停不下来
+MAX_TOOL_ROUNDS = 4
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 # 模型并发闸门（验收 B10）。目前后端是单进程，用进程内信号量即可；
 # 将来若启动多个后端进程，需要换成 Redis 计数。
@@ -43,7 +54,10 @@ def _fit_history(newest_first: list[Message]) -> list[dict[str, str]]:
     中文实际约 0.6–1 个 token，英文更少，所以这个估算只会偏保守，不会超限。
     """
     budget = (
-        settings.llm_context_tokens - settings.llm_reserved_output_tokens - len(SYSTEM_PROMPT)
+        settings.llm_context_tokens
+        - settings.llm_reserved_output_tokens
+        - settings.llm_reserved_tool_tokens
+        - len(SYSTEM_PROMPT)
     )
     kept: list[dict[str, str]] = []
     for message in newest_first:
@@ -59,9 +73,16 @@ def _event(name: str, data: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _save_reply(conversation_id: str, content: str) -> None:
+async def _save_reply(conversation_id: str, content: str, blocks: list[dict]) -> None:
     async with SessionLocal() as db:
-        db.add(Message(conversation_id=conversation_id, role="assistant", content=content))
+        db.add(
+            Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=content,
+                blocks=blocks or None,
+            )
+        )
         conversation = await db.get(Conversation, conversation_id)
         if conversation is not None:
             conversation.updated_at = now()
@@ -69,7 +90,7 @@ async def _save_reply(conversation_id: str, content: str) -> None:
 
 
 async def _stream(
-    conversation_id: str, title: str, messages: list[dict[str, str]]
+    conversation_id: str, title: str, messages: list[dict[str, Any]]
 ) -> AsyncIterator[str]:
     # 先把会话信息和状态发出去，用户 1 秒内就能看到反馈（验收 B1），不必等模型
     yield _event("meta", {"conversation_id": conversation_id, "title": title})
@@ -77,28 +98,67 @@ async def _stream(
     yield _event("status", {"text": "当前提问人数较多，正在排队…" if queued else "正在思考…"})
 
     parts: list[str] = []
+    blocks: list[dict] = []
     try:
         async with _gate:
             if queued:
                 yield _event("status", {"text": "正在思考…"})
-            async for text in llm.stream_chat(messages):
-                parts.append(text)
-                yield _event("delta", {"text": text})
+
+            for round_no in range(MAX_TOOL_ROUNDS + 1):
+                # 最后一轮不再提供工具，逼模型用已有数据给出回答
+                tools = TOOLS if round_no < MAX_TOOL_ROUNDS else None
+                round_text: list[str] = []
+                calls: list[dict[str, str]] = []
+                async for kind, value in llm.stream_chat(messages, tools):
+                    if kind == "text":
+                        round_text.append(value)
+                        parts.append(value)
+                        yield _event("delta", {"text": value})
+                    else:
+                        calls = value
+                if not calls:
+                    break
+
+                # 把模型的调用请求和每个工具的结果依次接到对话后面，再让模型继续
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "".join(round_text),
+                        "tool_calls": [
+                            {
+                                "id": call["id"],
+                                "type": "function",
+                                "function": {"name": call["name"], "arguments": call["arguments"]},
+                            }
+                            for call in calls
+                        ],
+                    }
+                )
+                for call in calls:
+                    yield _event("status", {"text": STATUS.get(call["name"], "正在查询数据…")})
+                    result = await run_tool(call["name"], call["arguments"])
+                    for block in result.blocks:
+                        blocks.append(block)
+                        yield _event("block", block)
+                    messages.append(
+                        {"role": "tool", "tool_call_id": call["id"], "content": result.text}
+                    )
+                yield _event("status", {"text": "正在整理回答…"})
         yield _event("done", {})
     except Exception:  # noqa: BLE001 任何失败都要以事件形式告诉前端，而不是断流
         logger.exception("模型调用失败")
         yield _event("error", {"message": "模型服务暂时不可用，请稍后重试"})
     finally:
         # 用户中途停止或断开时也保留已生成的部分；放进独立任务，不受本次请求取消的影响
-        if parts:
-            task = asyncio.create_task(_save_reply(conversation_id, "".join(parts)))
+        if parts or blocks:
+            task = asyncio.create_task(_save_reply(conversation_id, "".join(parts), blocks))
             _background.add(task)
             task.add_done_callback(_background.discard)
 
 
 @router.post("")
 async def chat(body: ChatIn, user: User = Depends(current_user)) -> StreamingResponse:
-    """提问并以事件流返回回答。事件：meta、status、delta、done、error。"""
+    """提问并以事件流返回回答。事件：meta、status、delta、block、done、error。"""
     content = body.content.strip()
     async with SessionLocal() as db:
         if body.conversation_id:
@@ -120,7 +180,9 @@ async def chat(body: ChatIn, user: User = Depends(current_user)) -> StreamingRes
         history = _fit_history(list(recent))
         conversation_id, title = conversation.id, conversation.title
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+    # 模型不知道今天是哪天，而"最近""今天"这类问题需要它知道
+    clock = f"当前时间：{datetime.now(SHANGHAI):%Y-%m-%d %H:%M}（北京时间）。"
+    messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{clock}"}, *history]
     return StreamingResponse(
         _stream(conversation_id, title, messages),
         media_type="text/event-stream",
