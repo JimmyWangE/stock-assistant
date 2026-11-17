@@ -35,14 +35,14 @@ docs/               项目总览、架构方案、进度记录
 | `stock-assistant-postgres` | 数据库（仅监听本机） |
 | `stock-assistant-redis` | 缓存（仅监听本机） |
 
-具体目录、端口、模型服务地址、密钥路径都不写在仓库里，以服务器上的 `.env` 和服务单元文件为准。`.env` 各项含义见 [.env.example](.env.example)，nginx 站点配置参考 [deploy/nginx.conf.example](deploy/nginx.conf.example)。
+具体目录、端口、模型服务地址、密钥路径都不写在仓库里，以服务器上的 `.env` 和服务单元文件为准。`.env` 各项含义见 [.env.example](.env.example)；服务单元和 nginx 配置的脱敏副本见 [deploy/](deploy/)。
 
 ### 更新代码
 
 在项目目录下执行：
 
 1. `git pull`
-2. 后端依赖：`<虚拟环境>/bin/pip install -r backend/requirements.txt`
+2. 后端依赖：`backend/.venv/bin/pip install -r backend/requirements.txt`
 3. 前端构建：`cd frontend && npm ci && npm run build`
 4. 重启后端：`systemctl restart stock-assistant-backend`（数据表会在启动时自动补建）
 5. 验证：`curl -s http://localhost:<对外端口>/api/health`

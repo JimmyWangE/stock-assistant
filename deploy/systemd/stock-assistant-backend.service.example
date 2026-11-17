@@ -1,0 +1,27 @@
+[Unit]
+Description=Stock Assistant API
+After=network.target stock-assistant-postgres.service stock-assistant-redis.service
+Requires=stock-assistant-postgres.service stock-assistant-redis.service
+
+[Service]
+Type=simple
+User=stock-assistant
+Group=stock-assistant
+WorkingDirectory=<项目目录>/backend
+EnvironmentFile=<项目目录>/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -r <模型密钥文件>
+ExecStartPre=/usr/bin/test -s <模型密钥文件>
+ExecStart=<项目目录>/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port <后端端口> --workers 1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=<项目目录>
+UMask=0027
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

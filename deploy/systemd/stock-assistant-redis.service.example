@@ -1,0 +1,22 @@
+[Unit]
+Description=Stock Assistant isolated Redis
+After=network.target
+
+[Service]
+Type=notify
+User=stock-assistant-redis
+Group=stock-assistant-redis
+RuntimeDirectory=stock-assistant-redis
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/redis-server <项目目录>/runtime/redis/redis.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=<项目目录>/runtime/redis /run/stock-assistant-redis
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

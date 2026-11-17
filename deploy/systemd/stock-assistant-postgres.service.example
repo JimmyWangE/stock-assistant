@@ -1,0 +1,24 @@
+[Unit]
+Description=Stock Assistant isolated PostgreSQL
+After=network.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+RuntimeDirectory=stock-assistant-postgres
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/postgres -D <项目目录>/runtime/postgres -c listen_addresses=127.0.0.1 -c port=<数据库端口> -c unix_socket_directories=/run/stock-assistant-postgres -c password_encryption=scram-sha-256
+ExecStartPost=/bin/bash -c 'for attempt in {1..40}; do /usr/bin/pg_isready -q -h /run/stock-assistant-postgres -p <数据库端口> && exit 0; /usr/bin/sleep 0.5; done; exit 1'
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=<项目目录>/runtime/postgres /run/stock-assistant-postgres
+UMask=0077
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

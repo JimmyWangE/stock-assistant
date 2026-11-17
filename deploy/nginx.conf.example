@@ -1,21 +1,42 @@
-# 站点配置参考。<...> 处按服务器实际情况替换；服务器上的真实配置不进仓库。
-server {
-    listen <对外端口>;
-    root <项目目录>/frontend/dist;
-    index index.html;
+worker_processes 2;
+pid /run/stock-assistant-nginx/nginx.pid;
+error_log /var/log/stock-assistant/nginx-error.log notice;
 
-    location /api/ {
-        proxy_pass http://127.0.0.1:<后端端口>;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header Connection "";
-        # 流式回答必须关闭缓冲，否则文字会攒成一整段才显示；长回答不能被超时掐断
-        proxy_buffering off;
-        proxy_read_timeout 600s;
-    }
+events {
+    worker_connections 1024;
+}
 
-    location / {
-        try_files $uri $uri/ /index.html;
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /var/log/stock-assistant/nginx-access.log;
+    client_body_temp_path /run/stock-assistant-nginx/client_body;
+    proxy_temp_path /run/stock-assistant-nginx/proxy;
+    fastcgi_temp_path /run/stock-assistant-nginx/fastcgi;
+    uwsgi_temp_path /run/stock-assistant-nginx/uwsgi;
+    scgi_temp_path /run/stock-assistant-nginx/scgi;
+    sendfile on;
+    keepalive_timeout 65;
+
+    server {
+        listen <对外端口>;
+        server_name _;
+        root <项目目录>/frontend/dist;
+        index index.html;
+
+        location /api/ {
+            proxy_pass http://127.0.0.1:<后端端口>;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Connection "";
+            # 流式回答必须关闭缓冲，否则文字会攒成一整段才显示；长回答不能被超时掐断
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
     }
 }
