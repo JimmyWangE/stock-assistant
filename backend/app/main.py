@@ -19,10 +19,10 @@ from app.tools import market
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # 启动时把数据库表结构升级到最新。迁移工具是同步的，放到线程里跑
     await asyncio.to_thread(upgrade_database)
-    # 后台预热行情工具要用的股票名称表，不阻塞启动
-    warm_up = asyncio.create_task(market.warm_up())
+    # 后台定期刷新行情工具要用的股票名称表，不阻塞启动
+    refresher = asyncio.create_task(market.keep_stock_table_fresh())
     yield
-    warm_up.cancel()
+    refresher.cancel()
 
 
 app = FastAPI(

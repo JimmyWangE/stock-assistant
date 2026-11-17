@@ -1,19 +1,22 @@
-"""行情与 K 线：数据经 AkShare 取自新浪财经。
+"""行情与 K 线。K 线经 AkShare 取自新浪财经；实时报价直接取自腾讯财经，新浪财经作后备。
 
 AkShare 是同步库，调用都放到线程里；结果做短时间缓存，避免多人同时问同一只股票时重复抓取。
 """
 
 import asyncio
+import csv
 import logging
 import re
 import time
 import unicodedata
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import akshare as ak
+import httpx
 import pandas as pd
 
 from app.tools.base import ToolError, ToolResult
@@ -26,7 +29,10 @@ DAY_PERIODS = {"daily": "日K", "weekly": "周K", "monthly": "月K"}
 # 取这么多根 K 线大约要往前推多少个自然日
 _DAYS_PER_BAR = {"daily": 1.6, "weekly": 7.5, "monthly": 32}
 
+DATA_DIR = Path(__file__).parent / "data"
+
 _cache: dict[tuple, tuple[float, Any]] = {}
+_quote_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _locks: dict[tuple, asyncio.Lock] = {}
 
 
@@ -47,23 +53,41 @@ def _normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text).replace(" ", "").upper()
 
 
-def _load_stock_table() -> dict[str, dict[str, str]]:
-    df = ak.stock_info_a_code_name()
-    by_code = {str(code): str(name).replace(" ", "") for code, name in zip(df["code"], df["name"])}
+def _build_table(pairs: list[tuple[str, str]]) -> dict[str, dict[str, str]]:
+    by_code = {code: name.replace(" ", "") for code, name in pairs}
     by_name = {_normalize(name): code for code, name in by_code.items()}
     return {"by_code": by_code, "by_name": by_name}
 
 
-async def _stock_table() -> dict[str, dict[str, str]]:
-    return await _cached(("stock_table",), 12 * 3600, _load_stock_table)
+def _read_bundled_table() -> dict[str, dict[str, str]]:
+    with (DATA_DIR / "stocks.csv").open(encoding="utf-8", newline="") as f:
+        return _build_table([(row["code"], row["name"]) for row in csv.DictReader(f)])
 
 
-async def warm_up() -> None:
-    """启动时预先加载股票名称表。加载要十秒左右，不能让第一个提问的人来等。"""
-    try:
-        await _stock_table()
-    except Exception:  # noqa: BLE001 预热失败不影响启动，用到时会再试
-        logger.warning("股票名称表预加载失败，将在首次查询时重试")
+def _fetch_table() -> dict[str, dict[str, str]]:
+    df = ak.stock_info_a_code_name()
+    return _build_table([(str(c), str(n)) for c, n in zip(df["code"], df["name"])])
+
+
+# 股票名称表。先用随代码发布的快照，保证任何时候都能按简称查；
+# 后台定期从交易所刷新，以便认出新上市和改名的股票。刷新失败就继续用手头这份。
+_table = _read_bundled_table()
+
+
+async def keep_stock_table_fresh() -> None:
+    """后端启动后在后台一直运行：立即刷新一次名称表，之后每 12 小时一次。"""
+    global _table
+    while True:
+        try:
+            fresh = await asyncio.to_thread(_fetch_table)
+            if len(fresh["by_code"]) > 3000:  # 明显残缺的结果不采用
+                _table = fresh
+            await asyncio.sleep(12 * 3600)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 交易所网站偶尔取不到，不影响使用
+            logger.warning("股票名称表刷新失败，继续使用现有名称表，30 分钟后重试")
+            await asyncio.sleep(1800)
 
 
 def _exchange_prefix(code: str) -> str:
@@ -74,30 +98,23 @@ def _exchange_prefix(code: str) -> str:
     return "bj"
 
 
-async def resolve_stock(symbol: str) -> tuple[str, str]:
+def resolve_stock(symbol: str) -> tuple[str, str]:
     """把用户或模型给的"代码或简称"解析成（6 位代码，简称）。"""
     text = _normalize(symbol)
     digits = re.search(r"\d{6}", text)
-    try:
-        table = await _stock_table()
-    except Exception:  # noqa: BLE001 名称表取不到时，只要给的是代码仍可继续
-        table = {"by_code": {}, "by_name": {}}
-
+    by_code, by_name = _table["by_code"], _table["by_name"]
     if digits:
+        # 名称表可能还没收录新上市的股票，所以不认识的代码也放行，由数据源判断是否存在
         code = digits.group()
-        if table["by_code"] and code not in table["by_code"]:
-            raise ToolError(f"没有代码为 {code} 的 A 股股票。")
-        return code, table["by_code"].get(code, code)
-    if not table["by_name"]:
-        raise ToolError("股票名称表暂时取不到，请改用 6 位代码查询。")
-    if text in table["by_name"]:
-        code = table["by_name"][text]
-        return code, table["by_code"][code]
-    matches = [code for name, code in table["by_name"].items() if text and text in name]
+        return code, by_code.get(code, code)
+    if text in by_name:
+        code = by_name[text]
+        return code, by_code[code]
+    matches = [code for name, code in by_name.items() if text and text in name]
     if len(matches) == 1:
-        return matches[0], table["by_code"][matches[0]]
+        return matches[0], by_code[matches[0]]
     if len(matches) > 1:
-        names = "、".join(table["by_code"][c] for c in matches[:8])
+        names = "、".join(by_code[c] for c in matches[:8])
         raise ToolError(f"「{symbol}」对应多只股票：{names}。请用 6 位代码或完整简称重新查询。")
     raise ToolError(f"未找到股票「{symbol}」，请确认名称或提供 6 位代码。")
 
@@ -111,7 +128,7 @@ def _minute_bars(code: str, period: str, adjust: str = "") -> pd.DataFrame:
         symbol=_exchange_prefix(code) + code, period=period, adjust=adjust
     )
     if df is None or df.empty:
-        raise ToolError("数据源没有返回分钟行情")
+        raise ToolError("数据源没有返回分钟行情，请确认股票代码是否正确")
     for col in ("open", "high", "low", "close", "volume", "amount"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["day"] = pd.to_datetime(df["day"])
@@ -127,7 +144,7 @@ def _day_bars(code: str, period: str, start: str, adjust: str) -> pd.DataFrame:
         adjust=adjust,
     )
     if df is None or df.empty:
-        raise ToolError("数据源没有返回 K 线数据")
+        raise ToolError("数据源没有返回 K 线数据，请确认股票代码是否正确")
     df["date"] = pd.to_datetime(df["date"])
     return df.reset_index(drop=True)
 
@@ -136,35 +153,130 @@ def _num(value: float, digits: int = 2) -> str:
     return f"{value:.{digits}f}"
 
 
-async def get_stock_quote(symbol: str) -> ToolResult:
-    code, name = await resolve_stock(symbol)
+def _parse_tencent(body: str) -> dict[str, Any] | None:
+    """腾讯报价是一行用 ~ 分隔的文本；字段位置是固定的。"""
+    if "none_match" in body or '"' not in body:
+        return None
+    f = body.split('"')[1].split("~")
+    if len(f) < 38 or not f[3]:
+        return None
+    return {
+        "name": f[1],
+        "price": float(f[3]),
+        "prev_close": float(f[4]),
+        "open": float(f[5]),
+        "high": float(f[33]),
+        "low": float(f[34]),
+        "volume_lots": float(f[36]),
+        "amount_yi": float(f[37]) / 1e4,  # 原始单位是万元
+        "time": datetime.strptime(f[30], "%Y%m%d%H%M%S"),
+        "source": "腾讯财经",
+    }
+
+
+def _parse_sina(body: str) -> dict[str, Any] | None:
+    """新浪报价是一行用逗号分隔的文本。"""
+    if '"' not in body:
+        return None
+    f = body.split('"')[1].split(",")
+    if len(f) < 32 or not f[0]:
+        return None
+    return {
+        "name": f[0],
+        "price": float(f[3]),
+        "prev_close": float(f[2]),
+        "open": float(f[1]),
+        "high": float(f[4]),
+        "low": float(f[5]),
+        "volume_lots": float(f[8]) / 100,  # 原始单位是股
+        "amount_yi": float(f[9]) / 1e8,  # 原始单位是元
+        "time": datetime.strptime(f"{f[30]} {f[31]}", "%Y-%m-%d %H:%M:%S"),
+        "source": "新浪财经",
+    }
+
+
+async def _realtime_quote(code: str) -> dict[str, Any] | None:
+    """取实时报价：先腾讯，取不到再新浪。两家都不可用时返回 None，由调用方退到分钟线。
+
+    实测腾讯报价比当前时间滞后 1–5 秒（交易所快照本身约 3 秒一次）。
+    AkShare 没有封装单只股票的实时报价，所以这里直接请求两家的公开报价接口。
+    """
+    symbol = _exchange_prefix(code) + code
+    sources = (
+        (f"https://qt.gtimg.cn/q={symbol}", {}, _parse_tencent),
+        (
+            f"https://hq.sinajs.cn/list={symbol}",
+            {"Referer": "https://finance.sina.com.cn"},
+            _parse_sina,
+        ),
+    )
+    async with httpx.AsyncClient(timeout=3) as client:
+        for url, headers, parse in sources:
+            try:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                quote = parse(resp.content.decode("gbk", errors="replace"))
+            except Exception:  # noqa: BLE001 这一家不可用就换下一家
+                logger.warning("实时报价接口不可用：%s", url.split("/")[2])
+                continue
+            if quote is None:
+                # 接口正常但不认识这个代码
+                raise ToolError(f"没有代码为 {code} 的 A 股股票。")
+            return quote
+    return None
+
+
+async def _minute_quote(code: str) -> dict[str, Any]:
+    """实时接口都不可用时的后备：用 1 分钟线拼出行情，最多滞后约 1 分钟。"""
     minutes = await _cached(("min", code, "1", ""), 3, lambda: _minute_bars(code, "1"))
     last = minutes.iloc[-1]
     as_of: datetime = last["day"].to_pydatetime()
     today = minutes[minutes["day"].dt.date == as_of.date()]
-
-    # 昨收取自日线里早于"最新交易日"的最后一根；日线不常变，缓存久一些
     start = (as_of - timedelta(days=20)).strftime("%Y%m%d")
     days = await _cached(
         ("day", code, "daily", "", start[:6]), 600, lambda: _day_bars(code, "daily", start, "")
     )
     earlier = days[days["date"].dt.date < as_of.date()]
-    lines = [
-        f"{name}（{code}）行情，数据时间 {as_of:%Y-%m-%d %H:%M}（北京时间，分钟级行情，非逐笔）",
-        f"最新价 {_num(last['close'])} 元",
-    ]
-    if not earlier.empty:
-        prev_close = float(earlier.iloc[-1]["close"])
-        change = float(last["close"]) - prev_close
+    return {
+        "name": None,
+        "price": float(last["close"]),
+        "prev_close": float(earlier.iloc[-1]["close"]) if not earlier.empty else None,
+        "open": float(today.iloc[0]["open"]),
+        "high": float(today["high"].max()),
+        "low": float(today["low"].min()),
+        "volume_lots": float(today["volume"].sum()) / 100,
+        "amount_yi": float(today["amount"].sum()) / 1e8,
+        "time": as_of,
+        "source": "新浪财经（分钟线，实时接口暂不可用）",
+    }
+
+
+async def get_stock_quote(symbol: str) -> ToolResult:
+    code, name = resolve_stock(symbol)
+    hit = _quote_cache.get(code)
+    if hit and time.monotonic() - hit[0] < 1:  # 1 秒内多人问同一只股票，只取一次
+        quote = hit[1]
+    else:
+        quote = await _realtime_quote(code) or await _minute_quote(code)
+        _quote_cache[code] = (time.monotonic(), quote)
+
+    name = quote["name"] or name
+    price, prev = quote["price"], quote["prev_close"]
+    lines = [f"{name}（{code}）行情，数据时间 {quote['time']:%Y-%m-%d %H:%M:%S}（北京时间）"]
+    if price <= 0:
+        lines.append(f"当前没有成交价（可能停牌或尚未开盘），昨收 {_num(prev or 0)} 元")
+    else:
+        lines.append(f"最新价 {_num(price)} 元")
+        if prev:
+            lines.append(
+                f"涨跌额 {price - prev:+.2f} 元，涨跌幅 {(price - prev) / prev * 100:+.2f}%，"
+                f"昨收 {_num(prev)} 元"
+            )
         lines.append(
-            f"涨跌额 {change:+.2f} 元，涨跌幅 {change / prev_close * 100:+.2f}%，昨收 {_num(prev_close)} 元"
+            f"今开 {_num(quote['open'])}，最高 {_num(quote['high'])}，最低 {_num(quote['low'])}，"
+            f"成交量 {quote['volume_lots']:.0f} 手，成交额 {quote['amount_yi']:.2f} 亿元"
         )
-    lines.append(
-        f"今开 {_num(today.iloc[0]['open'])}，最高 {_num(today['high'].max())}，"
-        f"最低 {_num(today['low'].min())}，"
-        f"成交量 {today['volume'].sum() / 100:.0f} 手，成交额 {today['amount'].sum() / 1e8:.2f} 亿元"
-    )
-    lines.append(f"来源：新浪财经 {_source_url(code)}")
+    lines.append(f"数据来源：{quote['source']}；行情页面：{_source_url(code)}")
     return ToolResult(text="\n".join(lines))
 
 
@@ -172,7 +284,7 @@ async def get_kline(symbol: str, period: str = "daily", count: int = 120) -> Too
     if period not in MINUTE_PERIODS and period not in DAY_PERIODS:
         raise ToolError(f"不支持的周期「{period}」")
     count = max(20, min(int(count), 250))
-    code, name = await resolve_stock(symbol)
+    code, name = resolve_stock(symbol)
 
     if period in MINUTE_PERIODS:
         minutes = MINUTE_PERIODS[period]

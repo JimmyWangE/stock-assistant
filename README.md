@@ -16,7 +16,7 @@ backend/            FastAPI 后端
   app/auth/         注册、登录
   app/chat/         流式对话、并发排队
   app/sessions/     历史会话
-  app/tools/        模型可调用的数据工具：行情、K 线（经 AkShare 取自新浪财经）
+  app/tools/        模型可调用的数据工具：实时行情（腾讯财经）、K 线（经 AkShare 取自新浪财经）
   app/export/       待实现：PDF 导出
   migrations/       数据库表结构的迁移文件，后端启动时自动执行
   dev/mock_llm.py   本地开发用的假模型服务
@@ -61,7 +61,7 @@ docs/               项目总览、架构方案、进度记录
 | `llm.status` 为 `error` 且提示 401 | 密钥不正确 |
 | `llm.status` 为 `error` 且提示连接失败或超时 | 访问不到模型服务，用 `curl <LLM_BASE_URL>/models` 确认 |
 | 回答不是逐字出现，而是等很久后整段显示 | nginx 没有关闭缓冲，对照 `deploy/nginx.conf.example` 检查 `proxy_buffering off` |
-| 行情或 K 线问题回答"数据未获取" | 后端访问不到外网的行情数据源（新浪财经），检查服务器出网 |
+| 行情或 K 线问题回答"数据未获取" | 后端访问不到外网的行情数据源（腾讯财经、新浪财经），检查服务器出网 |
 | 网页打开是旧版本 | 前端没有重新构建，或 nginx 指向的不是 `frontend/dist` |
 
 注意：不要把密钥内容写进 `.env`、日志或任何回复里，只通过文件路径引用。模型服务地址、密钥路径、`.env` 都不要提交。
@@ -75,6 +75,8 @@ cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev
 ```bash
 cd frontend && npm install && npm run dev
 ```
+
+增删前端依赖后，必须删掉 `node_modules` 和 `package-lock.json` 再执行一次 `npm install` 来重新生成锁文件。直接在已有 `node_modules` 上安装，生成的锁文件会漏掉 Linux 上需要的包，导致服务器 `npm ci` 报错（已发生过两次）。
 
 本机没有 PostgreSQL 和模型服务时，用 SQLite 和假模型代替，分别在两个终端启动：
 
