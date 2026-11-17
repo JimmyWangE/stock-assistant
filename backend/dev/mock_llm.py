@@ -38,6 +38,9 @@ async def chat(request: Request) -> StreamingResponse:
     body = await request.json()
     question = body["messages"][-1]["content"]
     text = REPLY.format(question=question)
+    # 模仿真实模型：除非明确关闭思考，否则先输出思考内容和结束标记（没有起始标记）
+    if (body.get("chat_template_kwargs") or {}).get("enable_thinking", True):
+        text = "用户在提问。我需要用中文回答，并给出一个表格。\n</think>\n\n" + text
 
     async def gen():
         await asyncio.sleep(0.6)

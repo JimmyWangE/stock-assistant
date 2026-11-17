@@ -33,7 +33,26 @@ _background: set[asyncio.Task] = set()
 
 class ChatIn(BaseModel):
     conversation_id: str | None = None
-    content: str = Field(min_length=1, max_length=8000)
+    content: str = Field(min_length=1, max_length=4000)
+
+
+def _fit_history(newest_first: list[Message]) -> list[dict[str, str]]:
+    """从最新的消息往前取，直到用完上下文预算；返回按时间正序排列的消息。
+
+    模型上下文有限，超出会被模型服务直接拒绝。这里把 1 个字符按 1 个 token 估算：
+    中文实际约 0.6–1 个 token，英文更少，所以这个估算只会偏保守，不会超限。
+    """
+    budget = (
+        settings.llm_context_tokens - settings.llm_reserved_output_tokens - len(SYSTEM_PROMPT)
+    )
+    kept: list[dict[str, str]] = []
+    for message in newest_first:
+        budget -= len(message.content)
+        # 最新一条（用户刚提的问题）无论多长都要带上
+        if budget < 0 and kept:
+            break
+        kept.append({"role": message.role, "content": message.content})
+    return kept[::-1]
 
 
 def _event(name: str, data: dict) -> str:
@@ -96,9 +115,9 @@ async def chat(body: ChatIn, user: User = Depends(current_user)) -> StreamingRes
             select(Message)
             .where(Message.conversation_id == conversation.id)
             .order_by(Message.id.desc())
-            .limit(settings.llm_history_messages)
+            .limit(40)
         )
-        history = [{"role": m.role, "content": m.content} for m in reversed(list(recent))]
+        history = _fit_history(list(recent))
         conversation_id, title = conversation.id, conversation.title
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]

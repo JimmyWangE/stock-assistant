@@ -226,7 +226,7 @@ onBeforeUnmount(() => controller?.abort())
               type="textarea"
               resize="none"
               :autosize="{ minRows: 1, maxRows: 6 }"
-              :maxlength="8000"
+              :maxlength="4000"
               placeholder="输入问题，回车发送，Shift + 回车换行"
               @keydown.enter="onEnter"
             />
