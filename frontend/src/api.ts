@@ -20,8 +20,18 @@ export interface KlineBlock {
   bars: [string, number, number, number, number, number][]
 }
 
-/** 随回答展示、不经过模型的内容块。以后的财务图表、数据表格也加在这里。 */
-export type Block = KlineBlock
+/** 数据表格。每行第一格是行名，其余与 columns 一一对应。 */
+export interface TableBlock {
+  type: 'table'
+  title: string
+  columns: string[]
+  rows: string[][]
+  note?: string
+  source: { name: string; url: string }
+}
+
+/** 随回答展示、不经过模型的内容块。 */
+export type Block = KlineBlock | TableBlock
 
 export interface ChatMessage {
   role: 'user' | 'assistant'

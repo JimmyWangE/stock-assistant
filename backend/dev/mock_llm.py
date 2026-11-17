@@ -41,6 +41,12 @@ def _pick_tool(question: str) -> dict | None:
     if "K线" in question.upper() or "走势" in question:
         period = next((v for k, v in PERIODS.items() if k in question), "daily")
         return {"name": "get_kline", "arguments": json.dumps({"symbol": symbol, "period": period})}
+    if "财报" in question or "财务" in question:
+        return {"name": "get_financials", "arguments": json.dumps({"symbol": symbol})}
+    if "新闻" in question or "政策" in question:
+        if code or "茅台" in question:
+            return {"name": "get_stock_news", "arguments": json.dumps({"symbol": symbol})}
+        return {"name": "get_market_news", "arguments": json.dumps({})}
     if "股价" in question or "行情" in question:
         return {"name": "get_stock_quote", "arguments": json.dumps({"symbol": symbol})}
     return None

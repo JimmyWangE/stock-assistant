@@ -79,6 +79,7 @@ async def stream_chat(
         "model": await resolve_model(),
         "messages": messages,
         "stream": True,
+        "temperature": settings.llm_temperature,
         # 模型服务（vLLM）的扩展参数：控制是否先思考
         "chat_template_kwargs": {"enable_thinking": settings.llm_enable_thinking},
     }

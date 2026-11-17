@@ -119,8 +119,17 @@ def resolve_stock(symbol: str) -> tuple[str, str]:
     raise ToolError(f"未找到股票「{symbol}」，请确认名称或提供 6 位代码。")
 
 
-def _source_url(code: str) -> str:
+def _sina_url(code: str) -> str:
     return f"https://finance.sina.com.cn/realstock/company/{_exchange_prefix(code)}{code}/nc.shtml"
+
+
+def _tencent_url(code: str) -> str:
+    return f"https://gu.qq.com/{_exchange_prefix(code)}{code}/gp"
+
+
+def _cite(source: str, title: str, url: str) -> str:
+    """来源行。直接给出写好的 Markdown 链接，让模型照抄，避免它把来源名称和链接配错。"""
+    return f"来源（请原样写在回答末尾）：[{source}·{title}]({url})"
 
 
 def _minute_bars(code: str, period: str, adjust: str = "") -> pd.DataFrame:
@@ -171,6 +180,7 @@ def _parse_tencent(body: str) -> dict[str, Any] | None:
         "amount_yi": float(f[37]) / 1e4,  # 原始单位是万元
         "time": datetime.strptime(f[30], "%Y%m%d%H%M%S"),
         "source": "腾讯财经",
+        "url": _tencent_url,
     }
 
 
@@ -192,6 +202,7 @@ def _parse_sina(body: str) -> dict[str, Any] | None:
         "amount_yi": float(f[9]) / 1e8,  # 原始单位是元
         "time": datetime.strptime(f"{f[30]} {f[31]}", "%Y-%m-%d %H:%M:%S"),
         "source": "新浪财经",
+        "url": _sina_url,
     }
 
 
@@ -248,6 +259,7 @@ async def _minute_quote(code: str) -> dict[str, Any]:
         "amount_yi": float(today["amount"].sum()) / 1e8,
         "time": as_of,
         "source": "新浪财经（分钟线，实时接口暂不可用）",
+        "url": _sina_url,
     }
 
 
@@ -276,7 +288,7 @@ async def get_stock_quote(symbol: str) -> ToolResult:
             f"今开 {_num(quote['open'])}，最高 {_num(quote['high'])}，最低 {_num(quote['low'])}，"
             f"成交量 {quote['volume_lots']:.0f} 手，成交额 {quote['amount_yi']:.2f} 亿元"
         )
-    lines.append(f"数据来源：{quote['source']}；行情页面：{_source_url(code)}")
+    lines.append(_cite(quote["source"], f"{name}（{code}）行情", quote["url"](code)))
     return ToolResult(text="\n".join(lines))
 
 
@@ -317,7 +329,7 @@ async def get_kline(symbol: str, period: str = "daily", count: int = 120) -> Too
         "type": "kline",
         "title": title,
         "as_of": times[-1],
-        "source": {"name": "新浪财经", "url": _source_url(code)},
+        "source": {"name": "新浪财经", "url": _sina_url(code)},
         "bars": bars,
     }
 
@@ -335,5 +347,5 @@ async def get_kline(symbol: str, period: str = "daily", count: int = 120) -> Too
         f"{t[5:]} 开{_num(o)} 收{_num(c)}" for t, o, c, *_ in bars[-8:]
     )
     lines.append(f"最近 8 根：{recent}")
-    lines.append(f"来源：新浪财经 {_source_url(code)}")
+    lines.append(_cite("新浪财经", f"{name}（{code}）K 线", _sina_url(code)))
     return ToolResult(text="\n".join(lines), blocks=[block])

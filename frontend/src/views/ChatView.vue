@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
+import DataTable from '../components/DataTable.vue'
 import KlineChart from '../components/KlineChart.vue'
 import { renderMarkdown } from '../markdown'
 
@@ -213,6 +214,7 @@ onBeforeUnmount(() => controller?.abort())
             <div v-else class="message assistant" :class="{ failed: m.failed }">
               <template v-for="(block, bi) in m.blocks ?? []" :key="bi">
                 <KlineChart v-if="block.type === 'kline'" :block="block" />
+                <DataTable v-else-if="block.type === 'table'" :block="block" />
               </template>
               <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
               <div v-if="m.content" class="markdown" v-html="renderMarkdown(m.content)" />
