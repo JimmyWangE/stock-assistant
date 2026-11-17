@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # 登录凭证的签名密钥。留空时每次启动随机生成，重启后所有人需重新登录。
     secret_key: str = ""
     login_days: int = 7
+    # 会话距最后一次对话超过这么多天就自动删除（验收 C6）
+    conversation_keep_days: int = 30
 
     # 自研模型：OpenAI 兼容接口
     llm_base_url: str = ""  # 必须通过环境变量 LLM_BASE_URL 提供

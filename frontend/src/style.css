@@ -107,3 +107,8 @@ body {
   border-left: 3px solid var(--line);
   color: var(--text-muted);
 }
+
+/* 下拉菜单渲染在页面根部，组件内的样式够不到，所以放在全局 */
+.danger-item {
+  color: var(--danger);
+}

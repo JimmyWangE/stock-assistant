@@ -67,6 +67,11 @@ async function toError(resp: Response): Promise<ApiError> {
 }
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const resp = await send(method, url, body)
+  return resp.json() as Promise<T>
+}
+
+async function send(method: string, url: string, body?: unknown): Promise<Response> {
   let resp: Response
   try {
     resp = await fetch(url, {
@@ -78,7 +83,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     throw new ApiError(0, '无法连接服务器，请检查网络')
   }
   if (!resp.ok) throw await toError(resp)
-  return resp.json() as Promise<T>
+  return resp
 }
 
 export const api = {
@@ -88,7 +93,16 @@ export const api = {
   register: (username: string, password: string) =>
     request<User>('POST', '/api/auth/register', { username, password }),
   logout: () => request<unknown>('POST', '/api/auth/logout'),
-  listConversations: () => request<ConversationSummary[]>('GET', '/api/conversations'),
+  /** 带关键词时只返回标题或正文含该词的会话。 */
+  listConversations: (keyword = '') =>
+    request<ConversationSummary[]>(
+      'GET',
+      keyword ? `/api/conversations?q=${encodeURIComponent(keyword)}` : '/api/conversations',
+    ),
+  renameConversation: (id: string, title: string) =>
+    request<ConversationSummary>('PATCH', `/api/conversations/${encodeURIComponent(id)}`, { title }),
+  deleteConversation: (id: string) =>
+    send('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   getConversation: (id: string) =>
     request<ConversationDetail>('GET', `/api/conversations/${encodeURIComponent(id)}`),
 }

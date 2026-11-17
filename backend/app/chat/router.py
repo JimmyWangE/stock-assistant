@@ -79,6 +79,10 @@ def _event(name: str, data: dict) -> str:
 
 async def _save_reply(conversation_id: str, content: str, blocks: list[dict]) -> None:
     async with SessionLocal() as db:
+        conversation = await db.get(Conversation, conversation_id)
+        if conversation is None:
+            # 回答还没生成完，用户就把会话删了：不再保存
+            return
         db.add(
             Message(
                 conversation_id=conversation_id,
@@ -87,9 +91,7 @@ async def _save_reply(conversation_id: str, content: str, blocks: list[dict]) ->
                 blocks=blocks or None,
             )
         )
-        conversation = await db.get(Conversation, conversation_id)
-        if conversation is not None:
-            conversation.updated_at = now()
+        conversation.updated_at = now()
         await db.commit()
 
 

@@ -11,7 +11,7 @@ from app.chat.router import router as chat_router
 from app.config import settings
 from app.db import engine, redis
 from app.migrate import upgrade_database
-from app.sessions.router import router as sessions_router
+from app.sessions.router import keep_purging_expired, router as sessions_router
 from app.tools import market
 
 
@@ -21,8 +21,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await asyncio.to_thread(upgrade_database)
     # 后台定期刷新行情工具要用的股票名称表，不阻塞启动
     refresher = asyncio.create_task(market.keep_stock_table_fresh())
+    # 后台定期删除超过保留期的会话（验收 C6）
+    purger = asyncio.create_task(keep_purging_expired())
     yield
     refresher.cancel()
+    purger.cancel()
 
 
 app = FastAPI(

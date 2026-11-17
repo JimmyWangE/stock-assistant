@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Plus, Promotion, SwitchButton } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { MoreFilled, Plus, Promotion, Search, SwitchButton } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -14,6 +14,7 @@ const route = useRoute()
 const router = useRouter()
 
 const conversations = ref<ConversationSummary[]>([])
+const keyword = ref('')
 const currentId = ref<string | null>(null)
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
@@ -43,11 +44,73 @@ function handleError(e: unknown): void {
 }
 
 async function loadConversations(): Promise<void> {
+  const asked = keyword.value.trim()
   try {
-    conversations.value = await api.listConversations()
+    const list = await api.listConversations(asked)
+    // 输入得快时，先发的请求可能后返回；只采用与当前关键词一致的结果
+    if (asked === keyword.value.trim()) conversations.value = list
   } catch (e) {
     handleError(e)
   }
+}
+
+// 停止输入 300 毫秒后再搜索，不必每敲一个字就请求一次
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(keyword, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(loadConversations, 300)
+})
+
+async function rename(c: ConversationSummary): Promise<void> {
+  let title: string
+  try {
+    const result = await ElMessageBox.prompt('', '重命名会话', {
+      inputValue: c.title,
+      inputValidator: (v) => {
+        const length = (v ?? '').trim().length
+        return (length >= 1 && length <= 100) || '名称需要 1 到 100 个字'
+      },
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    title = result.value.trim()
+  } catch {
+    return // 用户取消
+  }
+  try {
+    c.title = (await api.renameConversation(c.id, title)).title
+  } catch (e) {
+    handleError(e)
+  }
+}
+
+async function remove(c: ConversationSummary): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除后无法恢复：${c.title}`, '删除会话', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      confirmButtonClass: 'el-button--danger',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await api.deleteConversation(c.id)
+    conversations.value = conversations.value.filter((x) => x.id !== c.id)
+    if (c.id === currentId.value) {
+      // 正在看的会话被删了：停掉还在生成的回答，回到新对话
+      controller?.abort()
+      router.replace('/')
+    }
+  } catch (e) {
+    handleError(e)
+  }
+}
+
+function onCommand(command: string, c: ConversationSummary): void {
+  if (command === 'rename') rename(c)
+  else if (command === 'delete') remove(c)
 }
 
 function scrollToBottom(force = false): void {
@@ -106,11 +169,14 @@ async function send(text = input.value): Promise<void> {
         if (event === 'meta') {
           if (!currentId.value) {
             currentId.value = data.conversation_id
-            conversations.value.unshift({
-              id: data.conversation_id,
-              title: data.title,
-              updated_at: new Date().toISOString(),
-            })
+            // 搜索中的列表只放匹配项，新会话等回答结束后重新查询再决定是否出现
+            if (!keyword.value.trim()) {
+              conversations.value.unshift({
+                id: data.conversation_id,
+                title: data.title,
+                updated_at: new Date().toISOString(),
+              })
+            }
             router.replace(`/c/${data.conversation_id}`)
           }
         } else if (event === 'status') {
@@ -164,7 +230,10 @@ async function logout(): Promise<void> {
 }
 
 onMounted(loadConversations)
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  clearTimeout(searchTimer)
+})
 </script>
 
 <template>
@@ -173,18 +242,40 @@ onBeforeUnmount(() => controller?.abort())
       <div class="brand">A股投研助手</div>
       <el-button class="new-chat" :icon="Plus" @click="router.push('/')">新对话</el-button>
 
+      <el-input
+        v-model="keyword"
+        class="search"
+        :prefix-icon="Search"
+        placeholder="搜索标题或内容"
+        maxlength="100"
+        clearable
+      />
+
       <nav class="history">
-        <p v-if="!conversations.length" class="history-empty">还没有历史对话</p>
-        <router-link
+        <p v-if="!conversations.length" class="history-empty">
+          {{ keyword.trim() ? '没有找到相关对话' : '还没有历史对话' }}
+        </p>
+        <div
           v-for="c in conversations"
           :key="c.id"
-          :to="`/c/${c.id}`"
           class="history-item"
           :class="{ active: c.id === currentId }"
-          :title="c.title"
         >
-          {{ c.title }}
-        </router-link>
+          <router-link :to="`/c/${c.id}`" class="history-title" :title="c.title">
+            {{ c.title }}
+          </router-link>
+          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, c)">
+            <button type="button" class="history-more" :aria-label="`${c.title} 的更多操作`">
+              <el-icon><MoreFilled /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                <el-dropdown-item command="delete" class="danger-item">删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </nav>
 
       <div class="account">
@@ -298,24 +389,59 @@ onBeforeUnmount(() => controller?.abort())
   color: var(--text-muted);
   font-size: 13px;
 }
+.search {
+  margin-bottom: 10px;
+}
 .history-item {
-  display: block;
-  padding: 7px 10px;
+  display: flex;
+  align-items: center;
   border-radius: 6px;
-  color: var(--text);
   font-size: 14px;
+}
+.history-title {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px 7px 10px;
+  color: var(--text);
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.history-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  /* 平时隐藏，悬停、当前会话或键盘聚焦时出现 */
+  opacity: 0;
+}
+.history-item:hover .history-more,
+.history-item.active .history-more,
+.history-more:focus-visible {
+  opacity: 1;
+}
+.history-more:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--text);
 }
 .history-item:hover {
   background: #eceef3;
 }
 .history-item.active {
   background: var(--brand-soft);
-  color: var(--brand);
   font-weight: 500;
+}
+.history-item.active .history-title {
+  color: var(--brand);
 }
 .account {
   display: flex;
