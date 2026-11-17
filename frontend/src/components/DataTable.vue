@@ -39,11 +39,16 @@ defineProps<{ block: TableBlock }>()
   margin: 0 0 16px;
   padding: 14px 16px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .title {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--gold);
+  color: var(--navy);
   font-weight: 600;
+  line-height: 1.3;
 }
 .scroll {
   overflow-x: auto;
@@ -61,9 +66,15 @@ td {
   border-bottom: 1px solid var(--line);
 }
 thead th {
+  border-top: 2px solid var(--navy);
+  border-bottom: 1px solid var(--navy);
   color: var(--text-muted);
+  font-size: 13px;
   font-weight: 500;
   text-align: right;
+}
+tbody tr:hover {
+  background: var(--surface-alt);
 }
 thead th:first-child,
 tbody th {

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,8 +12,18 @@ from app.chat.router import router as chat_router
 from app.config import settings
 from app.db import engine, redis
 from app.migrate import upgrade_database
+from app.overview import router as overview_router
 from app.sessions.router import keep_purging_expired, router as sessions_router
 from app.tools import market
+
+
+# uvicorn 只配置了它自己的日志；不设这一行，本项目 INFO 级别的日志（如过期会话清理数量）不会输出
+logging.getLogger("app").setLevel(logging.INFO)
+if not logging.getLogger("app").handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+    logging.getLogger("app").addHandler(_handler)
+    logging.getLogger("app").propagate = False
 
 
 @asynccontextmanager
@@ -37,6 +48,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
+app.include_router(overview_router)
 
 
 @app.get("/api/health/live")

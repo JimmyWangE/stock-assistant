@@ -4,7 +4,7 @@ import inspect
 import json
 import logging
 
-from app.tools import fundamentals, market, news
+from app.tools import fundamentals, market, news, policy
 from app.tools.base import ToolError, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -79,11 +79,30 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_news",
-            "description": "获取最新的财经与政策资讯（不限个股），可按关键词筛选，含标题、时间、摘要和原文链接",
+            "description": "获取财经媒体最新的市场资讯（不限个股），可按关键词筛选，含标题、时间、摘要和原文链接",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "keyword": {"type": "string", "description": "筛选关键词，如 央行、新能源；留空看最新"},
+                    "limit": {"type": "integer", "description": "条数，1 到 12，默认 8"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_policy",
+            "description": "获取官方网站最新发布的政策文件和通告（标题、日期、官网原文链接），问到政策时优先用它",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": policy.SOURCE_NAMES,
+                        "description": "发布机构；留空看全部",
+                    },
+                    "keyword": {"type": "string", "description": "标题关键词，如 资本市场；留空看最新"},
                     "limit": {"type": "integer", "description": "条数，1 到 12，默认 8"},
                 },
             },
@@ -97,6 +116,7 @@ _HANDLERS = {
     "get_financials": fundamentals.get_financials,
     "get_stock_news": news.get_stock_news,
     "get_market_news": news.get_market_news,
+    "get_policy": policy.get_policy,
 }
 
 # 工具执行期间显示给用户的状态
@@ -106,6 +126,7 @@ STATUS = {
     "get_financials": "正在获取财务数据…",
     "get_stock_news": "正在查找相关新闻…",
     "get_market_news": "正在获取最新资讯…",
+    "get_policy": "正在查阅官方政策发布…",
 }
 
 

@@ -6,8 +6,10 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
+import BrandMark from '../components/BrandMark.vue'
 import DataTable from '../components/DataTable.vue'
 import KlineChart from '../components/KlineChart.vue'
+import MarketBar from '../components/MarketBar.vue'
 import { renderMarkdown } from '../markdown'
 
 const route = useRoute()
@@ -239,7 +241,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="layout">
     <aside class="sidebar">
-      <div class="brand">A股投研助手</div>
+      <div class="brand">
+        <BrandMark :size="30" />
+        <div>
+          <div class="brand-name">A股投研助手</div>
+          <div class="brand-sub">EQUITY RESEARCH</div>
+        </div>
+      </div>
       <el-button class="new-chat" :icon="Plus" @click="router.push('/')">新对话</el-button>
 
       <el-input
@@ -251,6 +259,7 @@ onBeforeUnmount(() => {
         clearable
       />
 
+      <div class="history-label">历史对话</div>
       <nav class="history">
         <p v-if="!conversations.length" class="history-empty">
           {{ keyword.trim() ? '没有找到相关对话' : '还没有历史对话' }}
@@ -279,17 +288,20 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="account">
+        <span class="avatar" aria-hidden="true">{{ currentUser?.username.slice(0, 1).toUpperCase() }}</span>
         <span class="username" :title="currentUser?.username">{{ currentUser?.username }}</span>
         <el-button text :icon="SwitchButton" @click="logout">退出</el-button>
       </div>
     </aside>
 
     <main class="main">
+      <MarketBar />
       <div ref="scroller" class="scroller">
         <div class="column">
           <section v-if="!messages.length" class="welcome">
-            <h1>想了解哪只股票？</h1>
-            <p>可以直接提问，或从下面的示例开始。</p>
+            <div class="welcome-mark"><BrandMark :size="40" /></div>
+            <h1>A 股投研，从一个问题开始</h1>
+            <p>行情、K 线、财报、新闻与官方政策，均取自实时数据并附来源。</p>
             <div class="examples">
               <button v-for="ex in examples" :key="ex.type" type="button" @click="send(ex.text)">
                 <span class="example-type">{{ ex.type }}</span>
@@ -303,6 +315,7 @@ onBeforeUnmount(() => {
               <div class="bubble">{{ m.content }}</div>
             </div>
             <div v-else class="message assistant" :class="{ failed: m.failed }">
+              <div class="assistant-head"><BrandMark :size="18" />投研助手</div>
               <template v-for="(block, bi) in m.blocks ?? []" :key="bi">
                 <KlineChart v-if="block.type === 'kline'" :block="block" />
                 <DataTable v-else-if="block.type === 'table'" :block="block" />
@@ -357,44 +370,92 @@ onBeforeUnmount(() => {
   display: flex;
   height: 100%;
   min-width: 720px;
+  background: var(--surface-alt);
 }
 
-/* 左侧：历史会话 */
+/* 左侧：深色侧栏，历史会话 */
 .sidebar {
   display: flex;
   flex-direction: column;
-  width: 260px;
+  width: 264px;
   flex-shrink: 0;
-  padding: 16px 12px 12px;
+  padding: 18px 12px 12px;
   box-sizing: border-box;
-  border-right: 1px solid var(--line);
-  background: var(--surface-alt);
+  background: var(--navy);
+  color: var(--on-navy);
 }
 .brand {
-  padding: 0 8px 14px;
-  font-size: 17px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 18px;
+  color: #fff;
+}
+.brand-name {
+  font-size: 16px;
   font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.5px;
+}
+.brand-sub {
+  color: var(--gold);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 2px;
 }
 .new-chat {
   width: 100%;
-  margin-bottom: 12px;
+  height: 36px;
+  margin-bottom: 10px;
+  border-color: var(--navy-line);
+  background: var(--navy-soft);
+  color: #fff;
+}
+.new-chat:hover,
+.new-chat:focus-visible {
+  border-color: var(--gold);
+  background: var(--navy-soft);
+  color: var(--gold);
+}
+.search {
+  margin-bottom: 14px;
+}
+/* 深色背景上的搜索框：改写组件库的颜色变量 */
+.search :deep(.el-input__wrapper) {
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--navy-line) inset;
+}
+.search :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--gold) inset;
+}
+.search :deep(.el-input__inner) {
+  color: #fff;
+}
+.search :deep(.el-input__inner::placeholder),
+.search :deep(.el-input__icon) {
+  color: var(--on-navy-muted);
+}
+.history-label {
+  padding: 0 10px 6px;
+  color: var(--on-navy-muted);
+  font-size: 12px;
+  letter-spacing: 1px;
 }
 .history {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-color: var(--navy-line) transparent;
 }
 .history-empty {
-  margin: 12px 8px;
-  color: var(--text-muted);
+  margin: 8px 10px;
+  color: var(--on-navy-muted);
   font-size: 13px;
-}
-.search {
-  margin-bottom: 10px;
 }
 .history-item {
   display: flex;
   align-items: center;
+  margin-bottom: 1px;
   border-radius: 6px;
   font-size: 14px;
 }
@@ -402,7 +463,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   padding: 7px 4px 7px 10px;
-  color: var(--text);
+  color: var(--on-navy);
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
@@ -419,7 +480,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 4px;
   background: none;
-  color: var(--text-muted);
+  color: var(--on-navy-muted);
   cursor: pointer;
   /* 平时隐藏，悬停、当前会话或键盘聚焦时出现 */
   opacity: 0;
@@ -430,33 +491,54 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 .history-more:hover {
-  background: rgba(0, 0, 0, 0.07);
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 .history-item:hover {
-  background: #eceef3;
+  background: var(--navy-soft);
 }
 .history-item.active {
-  background: var(--brand-soft);
-  font-weight: 500;
+  background: var(--navy-soft);
+  box-shadow: inset 2px 0 0 var(--gold);
 }
 .history-item.active .history-title {
-  color: var(--brand);
+  color: #fff;
+  font-weight: 500;
 }
 .account {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 10px 0 0 8px;
-  border-top: 1px solid var(--line);
+  padding: 12px 0 0 8px;
+  border-top: 1px solid var(--navy-line);
+}
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--navy-line);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
 }
 .username {
+  flex: 1;
   min-width: 0;
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.account .el-button {
+  color: var(--on-navy-muted);
+}
+.account .el-button:hover {
+  background: var(--navy-soft);
+  color: #fff;
 }
 
 /* 右侧：对话 */
@@ -472,39 +554,45 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 .column {
-  max-width: 820px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 0 24px;
 }
 .scroller .column {
-  padding-top: 28px;
+  padding-top: 24px;
   padding-bottom: 16px;
 }
 
 .welcome {
-  padding-top: 10vh;
+  padding-top: 8vh;
+}
+.welcome-mark {
+  margin-bottom: 14px;
+  color: var(--navy);
 }
 .welcome h1 {
   margin: 0;
+  color: var(--navy);
   font-size: 26px;
   line-height: 1.3;
+  letter-spacing: 0.5px;
 }
 .welcome p {
-  margin: 6px 0 24px;
+  margin: 8px 0 26px;
   color: var(--text-muted);
 }
 .examples {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 .examples button {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 14px;
+  gap: 4px;
+  padding: 13px 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -512,18 +600,25 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-.examples button:hover {
+.examples button:hover,
+.examples button:focus-visible {
   border-color: var(--brand);
-  background: var(--brand-soft);
+  box-shadow: 0 2px 10px rgba(11, 29, 51, 0.08);
+  outline: none;
 }
 .example-type {
-  color: var(--text-muted);
+  color: var(--brand);
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .message {
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 .message.user {
   display: flex;
@@ -532,15 +627,34 @@ onBeforeUnmount(() => {
 .bubble {
   max-width: 80%;
   padding: 9px 14px;
-  border-radius: 12px;
-  background: var(--brand-soft);
+  border-radius: 10px 10px 2px 10px;
+  background: var(--navy);
+  color: #fff;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* 回答做成一张"报告卡片" */
 .message.assistant {
+  padding: 16px 20px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(11, 29, 51, 0.04);
   overflow-wrap: anywhere;
 }
-.message.failed {
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--navy);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.message.failed .markdown {
   color: var(--danger);
 }
 .status {
@@ -554,7 +668,7 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--brand);
+  background: var(--gold);
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -568,21 +682,32 @@ onBeforeUnmount(() => {
 }
 
 .composer {
-  padding: 12px 0 10px;
-  border-top: 1px solid var(--line);
+  padding: 4px 0 10px;
 }
 .input-row {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
+  padding: 8px 8px 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 2px 12px rgba(11, 29, 51, 0.06);
+  transition: border-color 0.15s;
 }
+.input-row:focus-within {
+  border-color: var(--brand);
+}
+/* 输入框自身不再画边框，由外层容器统一画 */
 .input-row :deep(.el-textarea__inner) {
-  padding: 9px 12px;
+  padding: 7px 10px;
+  box-shadow: none;
+  background: transparent;
   font-size: 15px;
   line-height: 1.6;
 }
 .action {
-  height: 42px;
+  height: 38px;
   flex-shrink: 0;
 }
 .disclaimer {

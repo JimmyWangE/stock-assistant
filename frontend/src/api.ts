@@ -5,6 +5,14 @@ export interface User {
   username: string
 }
 
+/** 大盘指数。percent 是涨跌幅（百分数）。 */
+export interface MarketIndex {
+  name: string
+  price: number
+  change: number
+  percent: number
+}
+
 export interface ConversationSummary {
   id: string
   title: string
@@ -93,6 +101,7 @@ export const api = {
   register: (username: string, password: string) =>
     request<User>('POST', '/api/auth/register', { username, password }),
   logout: () => request<unknown>('POST', '/api/auth/logout'),
+  indices: () => request<{ indices: MarketIndex[]; as_of: string }>('GET', '/api/market/indices'),
   /** 带关键词时只返回标题或正文含该词的会话。 */
   listConversations: (keyword = '') =>
     request<ConversationSummary[]>(

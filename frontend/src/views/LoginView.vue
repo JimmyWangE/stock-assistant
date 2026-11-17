@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api'
 import { setUser } from '../auth'
+import BrandMark from '../components/BrandMark.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,9 +62,29 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="page">
+    <section class="intro">
+      <div class="brand">
+        <BrandMark :size="34" />
+        <div>
+          <div class="brand-name">A股投研助手</div>
+          <div class="brand-sub">EQUITY RESEARCH</div>
+        </div>
+      </div>
+      <div class="pitch">
+        <h2>对话式投研工作台</h2>
+        <p>用一句话提问，获得带数据、图表和来源的研究回答。</p>
+        <ul>
+          <li><b>实时行情与 K 线</b>分钟、日、周、月线随问随看</li>
+          <li><b>财报解读</b>主要财务指标逐期对比</li>
+          <li><b>新闻与政策</b>财经资讯与部委官网原文链接</li>
+        </ul>
+      </div>
+      <p class="foot">仅供内部研究使用</p>
+    </section>
+
     <div class="card">
-      <h1>A股投研助手</h1>
-      <p class="subtitle">{{ isRegister ? '创建账号' : '登录后开始使用' }}</p>
+      <h1>{{ isRegister ? '创建账号' : '登录' }}</h1>
+      <p class="subtitle">{{ isRegister ? '注册后即可开始使用' : '欢迎回来，请登录后开始使用' }}</p>
 
       <el-form
         ref="formRef"
@@ -109,30 +130,97 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .page {
+  display: flex;
   min-height: 100%;
+  background: var(--surface);
+}
+
+/* 左侧：品牌介绍。窗口窄时隐藏，只留表单 */
+.intro {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  max-width: 560px;
+  padding: 40px 48px;
+  box-sizing: border-box;
+  background: linear-gradient(160deg, var(--navy) 0%, #12305a 100%);
+  color: var(--on-navy);
+}
+.brand {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
-  box-sizing: border-box;
-  background: var(--surface-alt);
+  gap: 12px;
+  color: #fff;
 }
+.brand-name {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.5px;
+}
+.brand-sub {
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+.pitch h2 {
+  margin: 0 0 10px;
+  color: #fff;
+  font-size: 30px;
+  line-height: 1.3;
+  letter-spacing: 1px;
+}
+.pitch p {
+  margin: 0 0 28px;
+  color: var(--on-navy-muted);
+}
+.pitch ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pitch li {
+  padding: 12px 0 12px 14px;
+  border-left: 2px solid var(--gold);
+  color: var(--on-navy-muted);
+  font-size: 14px;
+}
+.pitch li + li {
+  margin-top: 12px;
+}
+.pitch b {
+  display: block;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.foot {
+  margin: 0;
+  color: var(--on-navy-muted);
+  font-size: 12px;
+}
+@media (max-width: 860px) {
+  .intro {
+    display: none;
+  }
+}
+
 .card {
   width: 100%;
   max-width: 380px;
-  padding: 36px 32px 28px;
+  margin: auto;
+  padding: 32px 24px;
   box-sizing: border-box;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
 }
 h1 {
   margin: 0;
+  color: var(--navy);
   font-size: 24px;
   line-height: 1.3;
 }
 .subtitle {
-  margin: 4px 0 24px;
+  margin: 4px 0 28px;
   color: var(--text-muted);
 }
 .submit {
