@@ -12,6 +12,7 @@ from app.chat.router import router as chat_router
 from app.config import settings
 from app.db import engine, redis
 from app.migrate import upgrade_database
+from app.hawkeye import router as hawkeye_router
 from app.overview import keep_board_fresh, router as overview_router
 from app.sessions.router import keep_purging_expired, router as sessions_router
 from app.tools import market, screener
@@ -56,6 +57,7 @@ app.include_router(auth_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(overview_router)
+app.include_router(hawkeye_router)
 
 
 @app.get("/api/health/live")

@@ -16,6 +16,7 @@ export const router = createRouter({
         // 新对话和已有会话共用同一个页面，会话 id 在网址里，可直接收藏或刷新。
         // 新对话可带 ?q=问题，进入后自动提问（概览页、指数详情里的"AI 解读"用）
         { path: 'chat', name: 'new-chat', component: () => import('./views/ChatView.vue') },
+        { path: 'hawkeye', name: 'hawkeye', component: () => import('./views/HawkeyeView.vue') },
         { path: 'c/:id', name: 'chat', component: () => import('./views/ChatView.vue') },
       ],
     },

@@ -254,3 +254,45 @@ export async function streamChat(
     }
   }
 }
+
+/** 火眼金睛的一只候选股。 */
+export interface HawkeyePick {
+  code: string
+  name: string
+  score: number
+  stars: number
+  catalyst_score: number
+  market_score: number
+  catalysts: { kind: string; title: string; url: string; date: string }[]
+  warnings: { title: string; url: string }[]
+  reasons: string[]
+  risks: string[]
+  price: number
+  prev_close: number
+  open: number | null
+  gap: number | null
+  pct: number | null
+  volume_ratio: number | null
+  mktcap: number
+}
+
+export interface HawkeyeResult {
+  phase: string
+  preview: boolean
+  as_of: string
+  window: string
+  scanned: number
+  picks: HawkeyePick[]
+}
+
+export interface HawkeyeDay {
+  date: string
+  avg: number | null
+  win_rate: number | null
+  picks: { code: string; name: string; score: number; stars: number; kinds: string[]; price: number | null; since_open: number | null }[]
+}
+
+export const hawkeyeApi = {
+  today: () => request<HawkeyeResult>('GET', '/api/hawkeye'),
+  history: () => request<HawkeyeDay[]>('GET', '/api/hawkeye/history'),
+}

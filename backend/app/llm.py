@@ -1,4 +1,5 @@
 import json
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -67,6 +68,75 @@ class ThinkingFilter:
         return "" if self._answering else text
 
 
+class ToolTagFilter:
+    """去掉正文里文字形式的工具调用 <tool_call>{...}</tool_call>，并把其中的内容收集起来。
+
+    模型偶尔不按接口格式发起工具调用，而是把调用写成文字（服务器实测出现过），
+    这些文字不能显示给用户；能解析出来的，按正常的工具调用处理。
+    """
+
+    OPEN, CLOSE = "<tool_call>", "</tool_call>"
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._inside = False
+        self.captured: list[str] = []
+
+    def feed(self, text: str) -> str:
+        self._buffer += text
+        out = []
+        while self._buffer:
+            if self._inside:
+                end = self._buffer.find(self.CLOSE)
+                if end < 0:
+                    return "".join(out)
+                self.captured.append(self._buffer[:end])
+                self._buffer = self._buffer[end + len(self.CLOSE) :]
+                self._inside = False
+                continue
+            start = self._buffer.find(self.OPEN)
+            if start >= 0:
+                out.append(self._buffer[:start])
+                self._buffer = self._buffer[start + len(self.OPEN) :]
+                self._inside = True
+                continue
+            # 末尾可能是被切断的 "<tool_ca"，留到下一段再判断
+            keep = next(
+                (k for k in range(len(self.OPEN) - 1, 0, -1) if self._buffer.endswith(self.OPEN[:k])), 0
+            )
+            out.append(self._buffer[: len(self._buffer) - keep])
+            self._buffer = self._buffer[len(self._buffer) - keep :]
+            break
+        return "".join(out)
+
+    def flush(self) -> str:
+        """输出结束时调用：交出留着的尾巴；没闭合的调用标记里的内容也收集起来。"""
+        text, self._buffer = self._buffer, ""
+        if self._inside:
+            self.captured.append(text)
+            return ""
+        return text
+
+    def calls(self) -> list[dict[str, str]]:
+        """把收集到的文字解析成工具调用；解析不了的丢弃。"""
+        result = []
+        for body in self.captured:
+            try:
+                data = json.loads(body.strip())
+                name = data["name"]
+                args = data.get("arguments", {})
+            except (ValueError, KeyError, TypeError):
+                continue
+            result.append(
+                {
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                    "name": name,
+                    "arguments": args if isinstance(args, str) else json.dumps(args, ensure_ascii=False),
+                }
+            )
+        return result
+
+
 async def stream_chat(
     messages: list[dict[str, Any]], tools: list[dict] | None = None
 ) -> AsyncIterator[tuple[str, Any]]:
@@ -88,6 +158,7 @@ async def stream_chat(
         payload["tool_choice"] = "auto"
 
     thinking = ThinkingFilter(settings.llm_enable_thinking)
+    tags = ToolTagFilter()
     calls: dict[int, dict[str, str]] = {}
     # 首字可能要等一会儿，读超时放宽；连接超时保持短，服务不可达时尽快报错
     timeout = httpx.Timeout(connect=5, read=120, write=10, pool=5)
@@ -109,7 +180,7 @@ async def stream_chat(
                     continue
                 delta = choices[0].get("delta") or {}
                 if delta.get("content"):
-                    text = thinking.feed(delta["content"])
+                    text = tags.feed(thinking.feed(delta["content"]))
                     if text:
                         yield "text", text
                 # 工具调用的名称只在第一段出现，参数分多段到达，按序号拼起来
@@ -120,8 +191,12 @@ async def stream_chat(
                     call["name"] = fn.get("name") or call["name"]
                     call["arguments"] += fn.get("arguments") or ""
 
-    rest = thinking.flush()
+    rest = tags.feed(thinking.flush()) + tags.flush()
     if rest:
         yield "text", rest
-    if calls:
-        yield "tool_calls", [calls[i] for i in sorted(calls) if calls[i]["name"]]
+    found = [calls[i] for i in sorted(calls) if calls[i]["name"]]
+    # 没有正常的工具调用、但正文里写了文字形式的调用：只在本轮允许调工具时才采用
+    if not found and tools:
+        found = tags.calls()
+    if found:
+        yield "tool_calls", found

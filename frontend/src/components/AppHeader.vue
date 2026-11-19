@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ChatLineSquare, DataBoard, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, ChatLineSquare, DataBoard, Aim, SwitchButton } from '@element-plus/icons-vue'
 
 import { currentUser } from '../auth'
 import { board, openIndex, signed, trend } from '../market'
@@ -28,6 +28,9 @@ defineEmits<{ logout: [] }>()
         :class="{ active: $route.name === 'new-chat' || $route.name === 'chat' }"
       >
         <el-icon><ChatLineSquare /></el-icon>智能投研
+      </router-link>
+      <router-link to="/hawkeye" class="tab" active-class="active">
+        <el-icon><Aim /></el-icon>火眼金睛
       </router-link>
     </nav>
 

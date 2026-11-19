@@ -18,12 +18,13 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
+import { strategies } from '../strategies'
 import BrandMark from '../components/BrandMark.vue'
 import DataTable from '../components/DataTable.vue'
 import KlineChart from '../components/KlineChart.vue'
+import MarkdownView from '../components/MarkdownView.vue'
 import MarketPanel from '../components/MarketPanel.vue'
 import QuoteCard from '../components/QuoteCard.vue'
-import { renderMarkdown } from '../markdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -47,6 +48,20 @@ const abilities = [
   { icon: Reading, name: '政策与新闻', desc: '部委官网原文与财经快讯', ask: '今天有哪些影响 A 股的重要政策和新闻' },
   { icon: Filter, name: '条件选股', desc: '按估值、财务、行情、技术、行业概念筛选', ask: '筛选市盈率低于 15、近三年 ROE 都高于 15% 的股票' },
 ]
+
+const inputRef = ref<{ focus: () => void }>()
+const showStrategies = ref(false)
+
+/** 把问题放进输入框，由用户确认或修改后再发送。 */
+function fillInput(text: string): void {
+  input.value = text
+  nextTick(() => inputRef.value?.focus())
+}
+
+function pickAbility(a: (typeof abilities)[number]): void {
+  if (a.name === '条件选股') showStrategies.value = !showStrategies.value
+  else fillInput(a.ask)
+}
 
 const greeting = computed(() => {
   // 按北京时间问候，和行情时间保持一致，不随用户电脑的时区变化
@@ -158,12 +173,30 @@ function onCommand(command: string, c: ConversationSummary): void {
   else if (command === 'delete') remove(c)
 }
 
+// 是否跟随新内容滚到底部。用户只要往上翻，就停止跟随，直到用户自己滚回底部。
+// 以前按"离底部不到 120 像素就跟随"判断：滚轮往上一格不到 120 像素，下一帧又被拉回底部，
+// 用户的滚动和自动滚动来回拉扯，看起来就是闪屏。
+let following = true
+let lastTop = 0
+
+function onScroll(): void {
+  const el = scroller.value
+  if (!el) return
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (el.scrollTop < lastTop - 1) following = false
+  if (distance < 8) following = true
+  lastTop = el.scrollTop
+}
+
 function scrollToBottom(force = false): void {
   const el = scroller.value
   if (!el) return
-  // 用户往上翻看历史时不打扰；只有本来就在底部附近才跟随新内容
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-  if (force || nearBottom) nextTick(() => (el.scrollTop = el.scrollHeight))
+  if (force) following = true
+  if (!following) return
+  nextTick(() => {
+    el.scrollTop = el.scrollHeight
+    lastTop = el.scrollTop
+  })
 }
 
 async function openConversation(id: string | undefined): Promise<void> {
@@ -201,6 +234,15 @@ async function send(text = input.value): Promise<void> {
   input.value = ''
   messages.value.push({ role: 'user', content }, { role: 'assistant', content: '' })
   const reply = messages.value[messages.value.length - 1]
+  let pending = ''
+  let frame = 0
+  const flushPending = () => {
+    frame = 0
+    if (!pending) return
+    reply.content += pending
+    pending = ''
+    scrollToBottom()
+  }
   streaming.value = true
   status.value = '正在发送…'
   controller = new AbortController()
@@ -228,8 +270,9 @@ async function send(text = input.value): Promise<void> {
           status.value = data.text
         } else if (event === 'delta') {
           status.value = ''
-          reply.content += data.text
-          scrollToBottom()
+          pending += data.text
+          // 模型每秒会推来几十段文字；攒到下一帧再一起更新页面，避免每段都重绘
+          frame ||= requestAnimationFrame(flushPending)
         } else if (event === 'block') {
           ;(reply.blocks ??= []).push(data)
           scrollToBottom()
@@ -248,6 +291,8 @@ async function send(text = input.value): Promise<void> {
       if (e instanceof ApiError && e.status === 401) goLogin()
     }
   } finally {
+    cancelAnimationFrame(frame)
+    flushPending()
     if (signal.aborted && !reply.content && !reply.blocks?.length) reply.content = '（已停止）'
     streaming.value = false
     status.value = ''
@@ -327,7 +372,7 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="main">
-        <div ref="scroller" class="scroller">
+        <div ref="scroller" class="scroller" @scroll.passive="onScroll">
           <div class="column">
             <section v-if="!messages.length" class="welcome">
               <p class="greeting">{{ greeting }}</p>
@@ -338,18 +383,36 @@ onBeforeUnmount(() => {
                   v-for="a in abilities"
                   :key="a.name"
                   type="button"
-                  :disabled="!a.ask"
-                  @click="send(a.ask)"
+                  :class="{ open: a.name === '条件选股' && showStrategies }"
+                  @click="pickAbility(a)"
                 >
                   <span class="ability-icon"><el-icon><component :is="a.icon" /></el-icon></span>
-                  <span class="ability-name">
-                    {{ a.name }}
-                    <span v-if="!a.ask" class="soon">即将上线</span>
-                  </span>
+                  <span class="ability-name">{{ a.name }}</span>
                   <span class="ability-desc">{{ a.desc }}</span>
-                  <span v-if="a.ask" class="ability-ask">“{{ a.ask }}”</span>
+                  <span v-if="a.name === '条件选股'" class="ability-ask">
+                    {{ showStrategies ? '收起策略推荐' : '查看 8 种选股策略推荐 →' }}
+                  </span>
+                  <span v-else class="ability-ask">“{{ a.ask }}”</span>
                 </button>
               </div>
+              <p class="hint">点击卡片会把示例问题放进输入框，可以修改后再发送。</p>
+
+              <!-- 选股策略：每条条件都附白话解释，方便新手理解 -->
+              <section v-if="showStrategies" class="strategies">
+                <h2>选股策略推荐<span>点击放入输入框，可修改数字后发送</span></h2>
+                <div class="strategy-grid">
+                  <button v-for="st in strategies" :key="st.name" type="button" @click="fillInput(st.ask)">
+                    <span class="st-name">{{ st.name }}</span>
+                    <span class="st-summary">{{ st.summary }}</span>
+                    <ul>
+                      <li v-for="c in st.conditions" :key="c.text">
+                        <b>{{ c.text }}</b><span>{{ c.plain }}</span>
+                      </li>
+                    </ul>
+                  </button>
+                </div>
+                <p class="st-note">策略只是按公开数据做初步筛选，结果不构成买卖建议；数字是常见经验值，可按需要调整。</p>
+              </section>
             </section>
 
             <template v-for="(m, i) in messages" :key="i">
@@ -373,8 +436,11 @@ onBeforeUnmount(() => {
                   <KlineChart v-else-if="block.type === 'kline'" :block="block" />
                   <DataTable v-else-if="block.type === 'table'" :block="block" />
                 </template>
-                <!-- renderMarkdown 的输出已经过净化，可以安全插入 -->
-                <div v-if="m.content" class="markdown" v-html="renderMarkdown(m.content)" />
+                <MarkdownView
+                  v-if="m.content"
+                  :content="m.content"
+                  :streaming="streaming && i === messages.length - 1"
+                />
                 <!-- 最后一条回答在等待时显示当前状态：发送中、排队、思考、查询数据 -->
                 <p
                   v-if="streaming && i === messages.length - 1 && (status || !m.content)"
@@ -391,6 +457,7 @@ onBeforeUnmount(() => {
           <div class="column">
             <div class="input-row">
               <el-input
+                ref="inputRef"
                 v-model="input"
                 type="textarea"
                 resize="none"
@@ -613,9 +680,90 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 14px rgba(11, 29, 51, 0.08);
   outline: none;
 }
-.abilities button:disabled {
-  background: transparent;
-  cursor: default;
+.abilities button.open {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.hint {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.strategies {
+  margin-top: 18px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.strategies h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding-left: 8px;
+  border-left: 3px solid var(--gold);
+  color: var(--navy);
+  font-size: 15px;
+}
+.strategies h2 span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.strategy-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.strategy-grid button:hover,
+.strategy-grid button:focus-visible {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  outline: none;
+}
+.st-name {
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 600;
+}
+.st-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.strategy-grid ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.strategy-grid li b {
+  margin-right: 6px;
+  color: var(--brand);
+  font-weight: 600;
+}
+.strategy-grid li span {
+  color: var(--text-muted);
+}
+.st-note {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 .ability-icon {
   display: flex;

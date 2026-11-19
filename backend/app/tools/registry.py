@@ -193,10 +193,12 @@ async def run_tool(name: str, arguments: str) -> ToolResult:
         # 先单独检查参数名对不对，这样工具内部的故障不会被误报成"参数不正确"
         inspect.signature(handler).bind(**params)
     except (ValueError, TypeError) as exc:
+        logger.info("工具 %s 参数不正确：%s；参数：%s", name, exc, arguments[:500])
         return ToolResult(text=f"数据未获取：工具参数不正确（{exc}）。")
     try:
         return await handler(**params)
     except ToolError as exc:
+        logger.info("工具 %s 未取到数据：%s；参数：%s", name, exc, arguments[:500])
         return ToolResult(text=f"数据未获取：{exc}")
     except Exception:  # noqa: BLE001 数据源的任何故障都不能中断回答
         logger.exception("工具 %s 执行失败", name)

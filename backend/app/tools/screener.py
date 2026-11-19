@@ -14,6 +14,7 @@
 
 import asyncio
 import difflib
+import json
 import logging
 import math
 import time
@@ -69,6 +70,12 @@ FIELDS: dict[str, tuple[str, str, str, bool]] = {
     "bps": ("每股净资产", "元", "fin", False),
 }
 OPS = [">", ">=", "<", "<=", "=", "between"]
+# 模型有时写成别的符号，统一换成标准写法
+_OP_ALIASES = {"==": "=", "≥": ">=", "≤": "<=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=", "eq": "=",
+               "大于": ">", "小于": "<", "不低于": ">=", "不高于": "<=", "介于": "between"}
+# 这些估值字段为负表示亏损（或净资产为负），设"低于某值"的条件时不应把亏损股算进来
+_POSITIVE_ONLY = {"pe_ttm", "pb"}
+_LABEL_TO_FIELD = {label: key for key, (label, *_rest) in FIELDS.items()}
 MAX_ROWS = 50
 
 _RANK_URL = (
@@ -331,7 +338,19 @@ async def _fetch_technicals() -> dict[str, Any]:
 # ---------------------------------------------------------------- 后台更新与存库
 
 
+def _json_safe(value: Any) -> Any:
+    """PostgreSQL 的 JSON 不接受 NaN（服务器实测写库失败），存库前换成 null。"""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 async def _save(name: str, payload: dict) -> None:
+    payload = _json_safe(payload)
     async with SessionLocal() as db:
         row = await db.get(ScreenData, name)
         if row is None:
@@ -412,12 +431,18 @@ async def _concept_names() -> dict[str, str]:
 
 def _pick(text: str, names: list[str], kind: str) -> list[str]:
     """按名称找行业或概念：先精确，再包含；都没有就报错并给出相近的名称。"""
-    text = text.strip()
-    if text in names:
-        return [text]
-    hits = [n for n in names if text in n or n.rstrip("Ⅱ") in text]
-    if hits:
-        return hits
+    text = text.strip().removesuffix("行业").removesuffix("板块").removesuffix("概念") or text.strip()
+    plain = {n: n.rstrip("Ⅱ").removesuffix("概念") for n in names}
+    # 依次尝试：名称相同（忽略"Ⅱ""概念"后缀）→ 以该词开头 → 包含该词。取第一种有结果的，
+    # 避免"白酒"同时匹配到"非白酒"
+    for rule in (
+        lambda n: plain[n] == text,
+        lambda n: plain[n].startswith(text),
+        lambda n: text in plain[n] and not plain[n].startswith("非"),
+    ):
+        hits = [n for n in names if rule(n)]
+        if hits:
+            return hits
     close = difflib.get_close_matches(text, names, n=6, cutoff=0.3)
     hint = f"相近的有：{'、'.join(close)}。" if close else ""
     raise ToolError(f"没有名为「{text}」的{kind}。{hint}可换一个名称再试。")
@@ -454,8 +479,18 @@ def _describe(cond: dict) -> str:
 
 def _normalize(conditions: list) -> list[dict]:
     """校验并规范化条件。出错时的提示会交给模型，让它改正后重试。"""
+    if isinstance(conditions, str):
+        # 模型有时把数组写成了 JSON 字符串
+        try:
+            conditions = json.loads(conditions)
+        except ValueError:
+            raise ToolError("conditions 应为数组，例如 [{\"field\": \"pe_ttm\", \"op\": \"<\", \"value\": 15}]") from None
+    if isinstance(conditions, dict):
+        conditions = [conditions]
     out = []
     for raw in conditions or []:
+        if isinstance(raw, dict) and raw.get("field") in _LABEL_TO_FIELD:
+            raw = {**raw, "field": _LABEL_TO_FIELD[raw["field"]]}
         if not isinstance(raw, dict) or raw.get("field") not in FIELDS:
             raise ToolError(
                 f"条件 {raw} 的 field 不正确，可用字段：{'、'.join(FIELDS)}。"
@@ -463,8 +498,14 @@ def _normalize(conditions: list) -> list[dict]:
             )
         field = raw["field"]
         is_bool = FIELDS[field][3]
-        op = raw.get("op") or "="
+        op = str(raw.get("op") or "=").strip()
+        op = _OP_ALIASES.get(op, op)
         value = raw.get("value", True if is_bool else None)
+        if isinstance(value, str) and op == "between":
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
         if is_bool:
             if isinstance(value, str):
                 value = value.lower() not in ("false", "0", "否")
@@ -548,10 +589,17 @@ async def screen_stocks(
     if not include_st:
         df = df[~df["name"].str.contains("ST", case=False, na=False)]
     if _fin is not None:
+        # 存库时 NaN 变成了 null，读回来是 None；统一转回数值列里的 NaN
         fin = pd.DataFrame.from_dict(_fin["rows"], orient="index")
+        numeric = [c for c in fin.columns if c != "industry"]
+        fin[numeric] = fin[numeric].apply(pd.to_numeric, errors="coerce")
+        fin["industry"] = fin["industry"].fillna("")
         df = df.join(fin, how="left")
     if _tech is not None:
         tech = pd.DataFrame.from_dict(_tech["rows"], orient="index")
+        tech[["ma5", "ma10", "ma20", "ma60", "rsi14"]] = tech[["ma5", "ma10", "ma20", "ma60", "rsi14"]].apply(
+            pd.to_numeric, errors="coerce"
+        )
         df = df.join(tech, how="left")
         # 价格与均线的比较用最新价，均线用截至上一个收盘的数据
         df["above_ma20"] = df["price"] > df["ma20"]
@@ -569,8 +617,13 @@ async def screen_stocks(
         picked, members = await _concept_members(concept)
         df = df[df.index.isin(members)]
         scope.append(f"概念：{'、'.join(picked)}")
+    positive_only = False
     for cond in conds:
         df = df[_mask(df[cond["field"]], cond)]
+        # "市盈率低于 10"指盈利且估值低，亏损股的市盈率为负，不算满足
+        if cond["field"] in _POSITIVE_ONLY and cond["op"] in ("<", "<=", "between"):
+            df = df[df[cond["field"]] > 0]
+            positive_only = True
 
     # 没指定排序时按第一个数值条件排：要求"低于"的从低到高，要求"高于"的从高到低；都没有就按市值
     first = next((c for c in conds if not FIELDS[c["field"]][3]), None)
@@ -599,6 +652,8 @@ async def screen_stocks(
     if _tech is not None and "tech" in groups:
         notes.append(f"技术指标的均线、MACD、RSI 截至 {_tech['as_of']} 收盘")
     notes.append("已排除停牌" + ("" if include_st else "和 ST 股票"))
+    if positive_only:
+        notes.append("市盈率、市净率为负（亏损或资不抵债）的股票不参与“低于”类条件")
     rule = "；".join(scope + [_describe(c) for c in conds]) or "无"
     order_text = f"按{FIELDS[sort_field][0]}{'从低到高' if order == 'asc' else '从高到低'}"
 
