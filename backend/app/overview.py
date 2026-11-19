@@ -456,10 +456,17 @@ async def get_market_overview() -> ToolResult:
         raise ToolError("大盘指数暂时取不到")
     lines = [f"A 股大盘概况，行情时间 {_board['as_of']}（北京时间），交易状态：{_session()}"]
     # 模型上下文有限：只有上证指数给出开高低，其余指数只给点位和涨跌幅
+    # 高开/低开由程序判断后写明，不让模型自己比较开盘价和昨收（服务器实测模型会说反）
     first = _board["indices"][0]
+    gap = (first["open"] - first["prev_close"]) / first["prev_close"] * 100
+    opening = "高开" if gap > 0 else "低开" if gap < 0 else "平开"
     lines.append(
-        f"{first['name']} {first['price']:.2f}（{first['percent']:+.2f}%，开 {first['open']:.2f} "
-        f"高 {first['high']:.2f} 低 {first['low']:.2f}）；其他指数："
+        f"{first['name']} 收于/现报 {first['price']:.2f}，涨跌幅 {first['percent']:+.2f}%；"
+        f"昨收 {first['prev_close']:.2f}，今开 {first['open']:.2f}（{opening} {gap:+.2f}%），"
+        f"最高 {first['high']:.2f}，最低 {first['low']:.2f}"
+    )
+    lines.append(
+        "其他指数："
         + "，".join(f"{i['name']} {i['price']:.2f}（{i['percent']:+.2f}%）" for i in _board["indices"][1:])
     )
     b, m = _board["breadth"], _board["market"]
@@ -470,7 +477,16 @@ async def get_market_overview() -> ToolResult:
         )
     if m:
         lines.append(f"沪深京三市成交额 {m['turnover_yi']:.0f} 亿元")
-        lines.append("涨跌分布：" + "，".join(f"{d['label']} {d['count']}" for d in m["distribution"]))
+        # 分档标签写成"涨…/跌…"的文字，避免模型把 3~5% 这类正数档读成下跌（服务器实测出现过）
+        dist = {d["label"]: d["count"] for d in m["distribution"]}
+        lines.append(
+            f"上涨家数按涨幅分档：涨停 {dist['涨停']}，涨超 7% {dist['>7%']}，涨 5%~7% {dist['5~7%']}，"
+            f"涨 3%~5% {dist['3~5%']}，涨 0~3% {dist['0~3%']}；平盘 {dist['平']}"
+        )
+        lines.append(
+            f"下跌家数按跌幅分档：跌 0~3% {dist['-3~0%']}，跌 3%~5% {dist['-5~-3%']}，"
+            f"跌 5%~7% {dist['-7~-5%']}，跌超 7% {dist['<-7%']}，跌停 {dist['跌停']}"
+        )
         lines.append("成交额前五：" + "，".join(f"{r['name']}（{r['percent']:+.2f}%，{r['amount_yi']:.0f} 亿）" for r in m["active"][:5]))
     s = _board["sectors"]
     if s:

@@ -45,7 +45,7 @@ docs/               项目总览、架构方案、进度记录
 
 1. `git pull`
 2. 后端依赖：`backend/.venv/bin/pip install -r backend/requirements.txt`
-3. 前端构建：`cd frontend && npm ci && npm run build`
+3. 前端构建：`cd frontend && npm ci && npm run build && chmod -R a+rX dist`（最后一步让 nginx 能读到构建产物：执行账户的 umask 若是 077，生成的文件只有本人可读，网页会返回 403）
 4. 重启后端：`systemctl restart stock-assistant-backend`（数据库表结构会在启动时自动升级到最新）
 5. 验证：`curl -s http://localhost:<对外端口>/api/health`
 
@@ -62,6 +62,7 @@ docs/               项目总览、架构方案、进度记录
 | `llm.status` 为 `error` 且提示连接失败或超时 | 访问不到模型服务，用 `curl <LLM_BASE_URL>/models` 确认 |
 | 回答不是逐字出现，而是等很久后整段显示 | nginx 没有关闭缓冲，对照 `deploy/nginx.conf.example` 检查 `proxy_buffering off` |
 | 行情或 K 线问题回答"数据未获取" | 后端访问不到外网的数据源（腾讯财经、新浪财经、东方财富），检查服务器出网 |
+| 网页返回 403，nginx 日志里有 `Permission denied` | 构建产物权限不够，执行 `chmod -R a+rX frontend/dist` |
 | 网页打开是旧版本 | 前端没有重新构建，或 nginx 指向的不是 `frontend/dist` |
 
 注意：不要把密钥内容写进 `.env`、日志或任何回复里，只通过文件路径引用。模型服务地址、密钥路径、`.env` 都不要提交。
