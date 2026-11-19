@@ -38,6 +38,8 @@ def _pick_tool(question: str) -> dict | None:
     """按关键词决定调用哪个工具；股票取问题里的 6 位代码，没有就用茅台。"""
     code = re.search(r"\d{6}", question)
     symbol = code.group() if code else "贵州茅台"
+    if "复盘" in question or "大盘" in question or "指数" in question:
+        return {"name": "get_market_overview", "arguments": json.dumps({})}
     if "K线" in question.upper() or "走势" in question:
         period = next((v for k, v in PERIODS.items() if k in question), "daily")
         return {"name": "get_kline", "arguments": json.dumps({"symbol": symbol, "period": period})}

@@ -17,17 +17,29 @@ from typing import Any
 import akshare as ak
 import httpx
 import pandas as pd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.models import User
 from app.security import current_user
 from app.tools import market, policy
+from app.tools.base import ToolError, ToolResult
 from app.tools.market import SHANGHAI
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market", tags=["市场看板"])
 
-_INDEX_CODES = ["sh000001", "sz399001", "sz399006", "sh000300", "sh000688"]
+# 前 5 个显示在顶栏，全部显示在市场概览页
+_INDEX_CODES = [
+    "sh000001",
+    "sz399001",
+    "sz399006",
+    "sh000300",
+    "sh000688",
+    "sh000016",
+    "sh000905",
+    "sh000852",
+    "bj899050",
+]
 _IDLE_SECONDS = 120
 
 # 全站共用的快照。各板块取到数据前是空值，页面据此决定是否显示
@@ -36,6 +48,8 @@ _board: dict[str, Any] = {
     "as_of": "",
     "sparks": {},
     "breadth": None,
+    # 全市场统计：涨跌分布、涨幅榜、跌幅榜、成交额榜、两市总成交额
+    "market": None,
     "sectors": None,
     "headlines": [],
     "policies": [],
@@ -62,6 +76,9 @@ async def _fetch_indices() -> None:
                 "name": f[1],
                 "price": float(f[3]),
                 "prev_close": float(f[4]),
+                "open": float(f[5]),
+                "high": float(f[33]),
+                "low": float(f[34]),
                 "change": float(f[31]),
                 "percent": float(f[32]),
                 "amount_yi": float(f[37]) / 1e4,  # 原始单位是万元
@@ -89,9 +106,40 @@ async def _fetch_sparks() -> None:
         _board["sparks"] = sparks
 
 
-def _tencent_breadth(bodies: list[str]) -> dict:
-    """由全市场逐只报价统计涨跌家数。腾讯报价第 47、48 个字段是涨停价、跌停价。"""
-    up = down = flat = limit_up = limit_down = 0
+# 涨跌分布的分档（涨跌幅，%）。涨停、跌停单独计数，不进入分档
+_BUCKETS = [
+    (">7%", 7, None),
+    ("5~7%", 5, 7),
+    ("3~5%", 3, 5),
+    ("0~3%", 0, 3),
+    ("平", None, None),
+    ("-3~0%", -3, 0),
+    ("-5~-3%", -5, -3),
+    ("-7~-5%", -7, -5),
+    ("<-7%", None, -7),
+]
+
+
+def _bucket(percent: float) -> str:
+    if percent == 0:
+        return "平"
+    for label, low, high in _BUCKETS:
+        if label == "平":
+            continue
+        if (low is None or percent > low) and (high is None or percent <= high):
+            return label
+    return "<-7%"
+
+
+def _market_stats(bodies: list[str]) -> tuple[dict, dict]:
+    """由全市场逐只报价统计涨跌家数、涨跌分布和各类排行。
+
+    腾讯报价字段：1 名称，2 代码，3 现价，4 昨收，6 成交量（手），37 成交额（万元），
+    38 换手率，47 涨停价，48 跌停价。
+    """
+    rows: list[dict] = []
+    limit_up = limit_down = 0
+    counts = {label: 0 for label, _, _ in _BUCKETS}
     as_of = ""
     for body in bodies:
         for line in body.split(";"):
@@ -101,34 +149,60 @@ def _tencent_breadth(bodies: list[str]) -> dict:
             if len(f) < 49 or not f[3]:
                 continue
             price, prev, volume = float(f[3]), float(f[4]), float(f[6] or 0)
-            # 没有成交的视为停牌，不计入涨跌
-            if price <= 0 or volume == 0:
+            # 没有成交的视为停牌，不计入统计
+            if price <= 0 or prev <= 0 or volume == 0:
                 continue
-            if price > prev:
-                up += 1
-            elif price < prev:
-                down += 1
-            else:
-                flat += 1
-            if f[47] and price >= float(f[47]):
+            percent = round((price - prev) / prev * 100, 2)
+            is_up_limit = bool(f[47]) and price >= float(f[47])
+            is_down_limit = bool(f[48]) and price <= float(f[48])
+            if is_up_limit:
                 limit_up += 1
-            if f[48] and price <= float(f[48]):
+            elif is_down_limit:
                 limit_down += 1
+            else:
+                counts[_bucket(percent)] += 1
+            rows.append(
+                {
+                    "code": f[2],
+                    "name": f[1],
+                    "price": price,
+                    "percent": percent,
+                    "amount_yi": round(float(f[37] or 0) / 1e4, 2),
+                    "turnover": float(f[38] or 0),
+                }
+            )
             as_of = max(as_of, f[30])
-    if up + down + flat < 1000:
-        raise ValueError(f"只统计到 {up + down + flat} 只股票，数据不完整")
+    if len(rows) < 1000:
+        raise ValueError(f"只统计到 {len(rows)} 只股票，数据不完整")
+
+    up = sum(1 for r in rows if r["percent"] > 0)
+    down = sum(1 for r in rows if r["percent"] < 0)
     stamp = datetime.strptime(as_of, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M")
-    return {
+    breadth = {
         "up": up,
         "down": down,
-        "flat": flat,
+        "flat": len(rows) - up - down,
         "limit_up": limit_up,
         "limit_down": limit_down,
         "as_of": stamp,
     }
+    distribution = [{"label": "涨停", "count": limit_up}]
+    distribution += [{"label": label, "count": counts[label]} for label, _, _ in _BUCKETS]
+    distribution.append({"label": "跌停", "count": limit_down})
+    by_percent = sorted(rows, key=lambda r: r["percent"])
+    stats = {
+        "distribution": distribution,
+        "gainers": by_percent[::-1][:10],
+        "losers": by_percent[:10],
+        "active": sorted(rows, key=lambda r: r["amount_yi"], reverse=True)[:10],
+        "turnover_yi": round(sum(r["amount_yi"] for r in rows), 0),
+        "count": len(rows),
+        "as_of": stamp,
+    }
+    return breadth, stats
 
 
-async def _breadth_from_tencent() -> dict:
+async def _market_from_tencent() -> tuple[dict, dict]:
     codes = [market._exchange_prefix(code) + code for code in market._table["by_code"]]
     async with httpx.AsyncClient(timeout=6) as client:
 
@@ -141,7 +215,7 @@ async def _breadth_from_tencent() -> dict:
         bodies = await asyncio.gather(
             *(batch(codes[i : i + 300]) for i in range(0, len(codes), 300))
         )
-    return _tencent_breadth(bodies)
+    return _market_stats(bodies)
 
 
 async def _breadth_from_legu() -> dict:
@@ -157,36 +231,49 @@ async def _breadth_from_legu() -> dict:
     }
 
 
-async def _fetch_breadth() -> None:
-    """涨跌家数：用腾讯报价自己统计；不可用时退到乐咕乐股（经 AkShare）。
+async def _fetch_market() -> None:
+    """全市场统计：用腾讯报价自己统计；不可用时涨跌家数退到乐咕乐股（经 AkShare），其余不显示。
 
     服务器上乐咕乐股的页面取不到表格，而腾讯报价在服务器上一直可用，所以以腾讯为主。
     """
     try:
-        _board["breadth"] = await _breadth_from_tencent()
+        _board["breadth"], _board["market"] = await _market_from_tencent()
     except Exception as exc:  # noqa: BLE001 换备用来源
         logger.info("涨跌家数改用备用来源，腾讯报价统计失败：%r", exc)
         _board["breadth"] = await _breadth_from_legu()
 
 
 async def _fetch_sectors() -> None:
+    """同花顺行业板块：全部约 90 个行业的涨跌幅、资金净流入和领涨股。"""
     df = await asyncio.to_thread(ak.stock_board_industry_summary_ths)
     df = df.sort_values("涨跌幅", ascending=False)
 
     def rows(part: pd.DataFrame) -> list[dict]:
         return [
-            {"name": str(r["板块"]), "percent": float(r["涨跌幅"]), "leader": str(r["领涨股"])}
+            {
+                "name": str(r["板块"]),
+                "percent": float(r["涨跌幅"]),
+                "leader": str(r["领涨股"]),
+                "leader_percent": float(r["领涨股-涨跌幅"]),
+                "inflow_yi": float(r["净流入"]),
+                "up": int(r["上涨家数"]),
+                "down": int(r["下跌家数"]),
+            }
             for _, r in part.iterrows()
         ]
 
-    _board["sectors"] = {"top": rows(df.head(5)), "bottom": rows(df.tail(5).iloc[::-1])}
+    _board["sectors"] = {
+        "top": rows(df.head(10)),
+        "bottom": rows(df.tail(10).iloc[::-1]),
+        "all": rows(df),
+    }
 
 
 async def _fetch_headlines() -> None:
     df = await asyncio.to_thread(ak.stock_news_global_em)
     df = df.copy()
     df["发布时间"] = pd.to_datetime(df["发布时间"], errors="coerce")
-    df = df.dropna(subset=["发布时间"]).sort_values("发布时间", ascending=False).head(12)
+    df = df.dropna(subset=["发布时间"]).sort_values("发布时间", ascending=False).head(20)
     _board["headlines"] = [
         {
             "title": str(r["标题"]),
@@ -207,7 +294,7 @@ async def _fetch_policies() -> None:
                 "time": item["date"][5:],
                 "source": item["source"].split("·")[0],
             }
-            for item in items[:12]
+            for item in items[:20]
         ]
 
 
@@ -215,7 +302,7 @@ async def _fetch_policies() -> None:
 _JOBS: list[tuple[str, float, Callable[[], Awaitable[None]]]] = [
     ("指数", 5, _fetch_indices),
     ("分时", 60, _fetch_sparks),
-    ("涨跌家数", 60, _fetch_breadth),
+    ("全市场统计", 30, _fetch_market),
     ("行业板块", 120, _fetch_sectors),
     ("快讯", 60, _fetch_headlines),
     ("官方政策", 600, _fetch_policies),
@@ -273,3 +360,128 @@ async def board(_: User = Depends(current_user)) -> dict:
     global _last_request
     _last_request = time.monotonic()
     return {**_board, "session": _session()}
+
+
+@router.get("/ticker")
+async def ticker() -> dict:
+    """登录页用的指数行情，不需要登录。只含公开的指数点位，不含任何用户数据。"""
+    global _last_request
+    _last_request = time.monotonic()
+    return {"indices": _board["indices"][:5], "as_of": _board["as_of"], "session": _session()}
+
+
+# 指数详情缓存：代码 -> (取数时刻, 结果)
+_detail_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _parse_minutes(rows: list[str]) -> list[list]:
+    """分时数据每行"时间 价格 累计成交量 [累计成交额]"，转成每分钟的成交量。"""
+    minutes = []
+    last_volume = 0.0
+    for row in rows:
+        parts = row.split(" ")
+        volume = float(parts[2])
+        minutes.append([f"{parts[0][:2]}:{parts[0][2:]}", float(parts[1]), max(volume - last_volume, 0)])
+        last_volume = volume
+    return minutes
+
+
+@router.get("/index/{code}")
+async def index_detail(code: str, _: User = Depends(current_user)) -> dict:
+    """单个指数的当日分时和最近 120 个交易日的日 K。同一指数 15 秒内只取一次。"""
+    if code not in _INDEX_CODES:
+        raise HTTPException(status_code=404, detail="不支持的指数")
+    hit = _detail_cache.get(code)
+    if hit and time.monotonic() - hit[0] < 15:
+        return hit[1]
+    try:
+        async with httpx.AsyncClient(timeout=6) as client:
+            minute_resp, day_resp = await asyncio.gather(
+                client.get(f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}"),
+                client.get(
+                    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                    f"?param={code},day,,,120,qfq"
+                ),
+            )
+        minute = minute_resp.json()["data"][code]
+        day = day_resp.json()["data"][code]
+        quote = minute["qt"][code]
+        date = minute["data"]["date"]
+        result = {
+            "code": code,
+            "name": quote[1],
+            "price": float(quote[3]),
+            "prev_close": float(quote[4]),
+            "open": float(quote[5]),
+            "high": float(quote[33]),
+            "low": float(quote[34]),
+            "change": float(quote[31]),
+            "percent": float(quote[32]),
+            "amount_yi": float(quote[37]) / 1e4,
+            "as_of": datetime.strptime(quote[30], "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S"),
+            "date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
+            "minutes": _parse_minutes(minute["data"]["data"]),
+            # 与个股 K 线图同一格式：[日期, 开, 收, 低, 高, 成交量（股）]；接口给的成交量单位是手
+            "bars": [
+                [d[0], float(d[1]), float(d[2]), float(d[4]), float(d[3]), float(d[5]) * 100]
+                for d in day.get("day") or day.get("qfqday") or []
+            ],
+            "source": {"name": "腾讯财经", "url": f"https://gu.qq.com/{code}/zs"},
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("指数详情 %s 取数失败：%r", code, exc)
+        raise HTTPException(status_code=502, detail="指数数据暂时取不到，请稍后重试") from exc
+    _detail_cache[code] = (time.monotonic(), result)
+    return result
+
+
+async def _ensure_fresh(max_age: float = 60) -> None:
+    """模型要用看板数据时，若后台刷新已停（没人看页面）或数据还没取到，就现取一次。"""
+    global _last_request
+    idle = time.monotonic() - _last_request > _IDLE_SECONDS
+    _last_request = time.monotonic()
+    if idle or not _board["indices"] or not _board["market"] or not _board["sectors"]:
+        failing: set[str] = set()
+        await asyncio.gather(
+            _run("指数", _fetch_indices, failing),
+            _run("全市场统计", _fetch_market, failing),
+            _run("行业板块", _fetch_sectors, failing),
+        )
+
+
+async def get_market_overview() -> ToolResult:
+    """大盘概况，给模型做市场复盘、指数解读用。数字来自看板快照。"""
+    await _ensure_fresh()
+    if not _board["indices"]:
+        raise ToolError("大盘指数暂时取不到")
+    lines = [f"A 股大盘概况，行情时间 {_board['as_of']}（北京时间），交易状态：{_session()}"]
+    # 模型上下文有限：只有上证指数给出开高低，其余指数只给点位和涨跌幅
+    first = _board["indices"][0]
+    lines.append(
+        f"{first['name']} {first['price']:.2f}（{first['percent']:+.2f}%，开 {first['open']:.2f} "
+        f"高 {first['high']:.2f} 低 {first['low']:.2f}）；其他指数："
+        + "，".join(f"{i['name']} {i['price']:.2f}（{i['percent']:+.2f}%）" for i in _board["indices"][1:])
+    )
+    b, m = _board["breadth"], _board["market"]
+    if b:
+        lines.append(
+            f"涨跌家数（含北交所）：上涨 {b['up']}，下跌 {b['down']}，平盘 {b['flat']}，"
+            f"涨停 {b['limit_up']}，跌停 {b['limit_down']}"
+        )
+    if m:
+        lines.append(f"沪深京三市成交额 {m['turnover_yi']:.0f} 亿元")
+        lines.append("涨跌分布：" + "，".join(f"{d['label']} {d['count']}" for d in m["distribution"]))
+        lines.append("成交额前五：" + "，".join(f"{r['name']}（{r['percent']:+.2f}%，{r['amount_yi']:.0f} 亿）" for r in m["active"][:5]))
+    s = _board["sectors"]
+    if s:
+        fmt = lambda r: f"{r['name']}（{r['percent']:+.2f}%，净流入 {r['inflow_yi']:+.1f} 亿，领涨 {r['leader']}）"  # noqa: E731
+        lines.append("行业领涨：" + "，".join(fmt(r) for r in s["top"][:5]))
+        lines.append("行业领跌：" + "，".join(fmt(r) for r in s["bottom"][:5]))
+        inflow = sorted(s["all"], key=lambda r: r["inflow_yi"], reverse=True)
+        lines.append("行业资金净流入前三：" + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[:3]))
+        lines.append("行业资金净流出前三：" + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[::-1][:3]))
+    lines.append(
+        "来源（请原样写在回答末尾）：[腾讯财经·沪深行情](https://gu.qq.com/sh000001/zs)、"
+        "[同花顺·行业板块](https://q.10jqka.com.cn/thshy/)"
+    )
+    return ToolResult(text="\n".join(lines))

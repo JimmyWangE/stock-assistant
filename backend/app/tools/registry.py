@@ -4,6 +4,7 @@ import inspect
 import json
 import logging
 
+from app import overview
 from app.tools import fundamentals, market, news, policy
 from app.tools.base import ToolError, ToolResult
 
@@ -108,6 +109,14 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_overview",
+            "description": "获取 A 股大盘概况：主要指数点位与涨跌、涨跌家数与分布、三市成交额、行业板块涨跌与资金流向。问大盘、指数、市场情绪、复盘时使用",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 _HANDLERS = {
@@ -117,6 +126,7 @@ _HANDLERS = {
     "get_stock_news": news.get_stock_news,
     "get_market_news": news.get_market_news,
     "get_policy": policy.get_policy,
+    "get_market_overview": overview.get_market_overview,
 }
 
 # 工具执行期间显示给用户的状态
@@ -127,6 +137,7 @@ STATUS = {
     "get_stock_news": "正在查找相关新闻…",
     "get_market_news": "正在获取最新资讯…",
     "get_policy": "正在查阅官方政策发布…",
+    "get_market_overview": "正在获取大盘概况…",
 }
 
 

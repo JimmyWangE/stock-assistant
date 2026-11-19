@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ArrowDown, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, ChatLineSquare, DataBoard, SwitchButton } from '@element-plus/icons-vue'
 
 import { currentUser } from '../auth'
-import { board, signed, trend } from '../market'
+import { board, openIndex, signed, trend } from '../market'
 import BrandMark from './BrandMark.vue'
 
 defineEmits<{ logout: [] }>()
@@ -18,13 +18,28 @@ defineEmits<{ logout: [] }>()
       </div>
     </div>
 
-    <!-- 指数行情条：放不下的指数整个不显示，不会截断数字 -->
+    <nav class="tabs">
+      <router-link to="/" class="tab" exact-active-class="active">
+        <el-icon><DataBoard /></el-icon>市场概览
+      </router-link>
+      <router-link
+        to="/chat"
+        class="tab"
+        :class="{ active: $route.name === 'new-chat' || $route.name === 'chat' }"
+      >
+        <el-icon><ChatLineSquare /></el-icon>智能投研
+      </router-link>
+    </nav>
+
+    <!-- 指数行情条：点击查看分时和日 K。放不下的指数整个不显示，不会截断数字 -->
     <ul v-if="board?.indices.length" class="ticker">
-      <li v-for="item in board.indices" :key="item.code" :class="trend(item.change)">
-        <span class="name">{{ item.name }}</span>
-        <span class="price">{{ item.price.toFixed(2) }}</span>
-        <span class="change">{{ signed(item.change) }}</span>
-        <span class="change">{{ signed(item.percent) }}%</span>
+      <li v-for="item in board.indices.slice(0, 5)" :key="item.code" :class="trend(item.change)">
+        <button type="button" :title="`查看${item.name}分时与日 K`" @click="openIndex(item.code)">
+          <span class="name">{{ item.name }}</span>
+          <span class="price">{{ item.price.toFixed(2) }}</span>
+          <span class="change">{{ signed(item.change) }}</span>
+          <span class="change">{{ signed(item.percent) }}%</span>
+        </button>
       </li>
     </ul>
     <div v-else class="ticker" />
@@ -55,7 +70,7 @@ defineEmits<{ logout: [] }>()
 .app-header {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 20px;
   height: 52px;
   flex-shrink: 0;
   padding: 0 16px 0 18px;
@@ -67,7 +82,6 @@ defineEmits<{ logout: [] }>()
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 214px;
   flex-shrink: 0;
   color: #fff;
 }
@@ -95,14 +109,55 @@ defineEmits<{ logout: [] }>()
   overflow: hidden;
 }
 .ticker li {
+  height: 52px;
+  padding-right: 6px;
+}
+.ticker button {
   display: flex;
   align-items: baseline;
   gap: 7px;
-  height: 52px;
-  padding-right: 26px;
+  height: 36px;
+  margin-top: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: 13px;
-  line-height: 52px;
+  line-height: 36px;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.ticker button:hover,
+.ticker button:focus-visible {
+  background: var(--navy-soft);
+  outline: none;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 52px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  box-sizing: border-box;
+  color: var(--on-navy-muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+.tab:hover {
+  color: #fff;
+}
+.tab.active {
+  border-bottom-color: var(--gold);
+  color: #fff;
+  font-weight: 600;
 }
 .name {
   color: var(--on-navy-muted);

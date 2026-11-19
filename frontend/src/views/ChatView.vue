@@ -18,13 +18,11 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError, streamChat, type ChatMessage, type ConversationSummary } from '../api'
 import { currentUser, setUser } from '../auth'
-import AppHeader from '../components/AppHeader.vue'
 import BrandMark from '../components/BrandMark.vue'
 import DataTable from '../components/DataTable.vue'
 import KlineChart from '../components/KlineChart.vue'
 import MarketPanel from '../components/MarketPanel.vue'
 import QuoteCard from '../components/QuoteCard.vue'
-import { startBoard, stopBoard } from '../market'
 import { renderMarkdown } from '../markdown'
 
 const route = useRoute()
@@ -148,7 +146,7 @@ async function remove(c: ConversationSummary): Promise<void> {
     if (c.id === currentId.value) {
       // 正在看的会话被删了：停掉还在生成的回答，回到新对话
       controller?.abort()
-      router.replace('/')
+      router.replace('/chat')
     }
   } catch (e) {
     handleError(e)
@@ -182,7 +180,7 @@ async function openConversation(id: string | undefined): Promise<void> {
   } catch (e) {
     // 会话不存在或不属于当前用户时，后端的提示会原样显示，然后回到新对话
     handleError(e)
-    if (!(e instanceof ApiError && e.status === 401)) router.replace('/')
+    if (!(e instanceof ApiError && e.status === 401)) router.replace('/chat')
   }
 }
 
@@ -266,34 +264,27 @@ function onEnter(e: Event): void {
   send()
 }
 
-async function logout(): Promise<void> {
-  controller?.abort()
-  try {
-    await api.logout()
-  } finally {
-    setUser(null)
-    router.replace({ name: 'login' })
-  }
-}
 
 onMounted(() => {
   loadConversations()
-  startBoard()
+  // 从概览页或指数详情带着问题跳过来：自动提问，并把问题从网址里去掉，刷新时不会重复提问
+  const q = route.query.q
+  if (route.name === 'new-chat' && typeof q === 'string' && q.trim()) {
+    router.replace({ name: 'new-chat' })
+    send(q)
+  }
 })
 onBeforeUnmount(() => {
   controller?.abort()
   clearTimeout(searchTimer)
-  stopBoard()
 })
 </script>
 
 <template>
   <div class="layout">
-    <AppHeader @logout="logout" />
-
     <div class="body">
       <aside class="sidebar">
-        <el-button class="new-chat" type="primary" :icon="Plus" @click="router.push('/')">
+        <el-button class="new-chat" type="primary" :icon="Plus" @click="router.push('/chat')">
           新对话
         </el-button>
         <el-input
@@ -438,8 +429,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  min-width: 760px;
-  background: var(--surface-alt);
 }
 .body {
   display: flex;

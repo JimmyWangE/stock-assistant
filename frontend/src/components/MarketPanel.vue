@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 
 import type { NewsRow } from '../api'
-import { board, signed, trend } from '../market'
+import { board, openIndex, signed, trend } from '../market'
 import Sparkline from './Sparkline.vue'
 
 const emit = defineEmits<{ ask: [question: string] }>()
@@ -41,7 +41,16 @@ function askAbout(item: NewsRow): void {
         <span class="meta">{{ board.as_of.slice(5, 16) }}</span>
       </h2>
       <ul class="index-list">
-        <li v-for="item in board.indices" :key="item.code" :class="trend(item.change)">
+        <li
+          v-for="item in board.indices.slice(0, 5)"
+          :key="item.code"
+          :class="trend(item.change)"
+          role="button"
+          tabindex="0"
+          :title="`查看${item.name}分时与日 K`"
+          @click="openIndex(item.code)"
+          @keydown.enter="openIndex(item.code)"
+        >
           <span class="index-name">{{ item.name }}</span>
           <Sparkline :points="board.sparks[item.code] ?? []" :base="item.prev_close" />
           <span class="index-price">{{ item.price.toFixed(2) }}</span>
@@ -184,11 +193,20 @@ ul {
 }
 
 .index-list li {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
   display: grid;
   grid-template-columns: 62px 84px 1fr 64px;
   align-items: center;
   gap: 8px;
   height: 34px;
+}
+.index-list li:hover,
+.index-list li:focus-visible {
+  background: var(--surface-alt);
+  outline: none;
 }
 .index-name {
   color: var(--text);

@@ -11,6 +11,9 @@ export interface MarketIndex {
   name: string
   price: number
   prev_close: number
+  open: number
+  high: number
+  low: number
   change: number
   percent: number
   amount_yi: number
@@ -20,6 +23,31 @@ export interface SectorRow {
   name: string
   percent: number
   leader: string
+  leader_percent: number
+  /** 资金净流入，亿元 */
+  inflow_yi: number
+  up: number
+  down: number
+}
+
+/** 排行榜里的一只股票。turnover 是换手率（%）。 */
+export interface StockRow {
+  code: string
+  name: string
+  price: number
+  percent: number
+  amount_yi: number
+  turnover: number
+}
+
+/** 指数详情：当日分时 + 最近 120 日日 K。 */
+export interface IndexDetail extends MarketIndex {
+  as_of: string
+  date: string
+  /** 每分钟 [时间, 点位, 成交量（手）] */
+  minutes: [string, number, number][]
+  bars: KlineBlock['bars']
+  source: { name: string; url: string }
 }
 
 export interface NewsRow {
@@ -44,7 +72,16 @@ export interface MarketBoard {
     limit_down: number
     as_of: string
   } | null
-  sectors: { top: SectorRow[]; bottom: SectorRow[] } | null
+  market: {
+    distribution: { label: string; count: number }[]
+    gainers: StockRow[]
+    losers: StockRow[]
+    active: StockRow[]
+    turnover_yi: number
+    count: number
+    as_of: string
+  } | null
+  sectors: { top: SectorRow[]; bottom: SectorRow[]; all: SectorRow[] } | null
   headlines: NewsRow[]
   policies: NewsRow[]
 }
@@ -154,6 +191,11 @@ export const api = {
     request<User>('POST', '/api/auth/register', { username, password }),
   logout: () => request<unknown>('POST', '/api/auth/logout'),
   board: () => request<MarketBoard>('GET', '/api/market/board'),
+  /** 登录页用，不需要登录 */
+  ticker: () =>
+    request<{ indices: MarketIndex[]; as_of: string; session: string }>('GET', '/api/market/ticker'),
+  indexDetail: (code: string) =>
+    request<IndexDetail>('GET', `/api/market/index/${encodeURIComponent(code)}`),
   /** 带关键词时只返回标题或正文含该词的会话。 */
   listConversations: (keyword = '') =>
     request<ConversationSummary[]>(
