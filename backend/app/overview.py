@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends
 
 from app.models import User
 from app.security import current_user
-from app.tools import policy
+from app.tools import market, policy
 from app.tools.market import SHANGHAI
 
 logger = logging.getLogger(__name__)
@@ -89,10 +89,65 @@ async def _fetch_sparks() -> None:
         _board["sparks"] = sparks
 
 
-async def _fetch_breadth() -> None:
+def _tencent_breadth(bodies: list[str]) -> dict:
+    """由全市场逐只报价统计涨跌家数。腾讯报价第 47、48 个字段是涨停价、跌停价。"""
+    up = down = flat = limit_up = limit_down = 0
+    as_of = ""
+    for body in bodies:
+        for line in body.split(";"):
+            if '"' not in line:
+                continue
+            f = line.split('"')[1].split("~")
+            if len(f) < 49 or not f[3]:
+                continue
+            price, prev, volume = float(f[3]), float(f[4]), float(f[6] or 0)
+            # 没有成交的视为停牌，不计入涨跌
+            if price <= 0 or volume == 0:
+                continue
+            if price > prev:
+                up += 1
+            elif price < prev:
+                down += 1
+            else:
+                flat += 1
+            if f[47] and price >= float(f[47]):
+                limit_up += 1
+            if f[48] and price <= float(f[48]):
+                limit_down += 1
+            as_of = max(as_of, f[30])
+    if up + down + flat < 1000:
+        raise ValueError(f"只统计到 {up + down + flat} 只股票，数据不完整")
+    stamp = datetime.strptime(as_of, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M")
+    return {
+        "up": up,
+        "down": down,
+        "flat": flat,
+        "limit_up": limit_up,
+        "limit_down": limit_down,
+        "as_of": stamp,
+    }
+
+
+async def _breadth_from_tencent() -> dict:
+    codes = [market._exchange_prefix(code) + code for code in market._table["by_code"]]
+    async with httpx.AsyncClient(timeout=6) as client:
+
+        async def batch(chunk: list[str]) -> str:
+            resp = await client.get(f"https://qt.gtimg.cn/q={','.join(chunk)}")
+            resp.raise_for_status()
+            return resp.content.decode("gbk", errors="replace")
+
+        # 每次 300 只，全市场约 19 次请求，并发进行，实测不到 1 秒
+        bodies = await asyncio.gather(
+            *(batch(codes[i : i + 300]) for i in range(0, len(codes), 300))
+        )
+    return _tencent_breadth(bodies)
+
+
+async def _breadth_from_legu() -> dict:
     df = await asyncio.to_thread(ak.stock_market_activity_legu)
     values = dict(zip(df["item"], df["value"]))
-    _board["breadth"] = {
+    return {
         "up": int(values["上涨"]),
         "down": int(values["下跌"]),
         "flat": int(values["平盘"]),
@@ -100,6 +155,18 @@ async def _fetch_breadth() -> None:
         "limit_down": int(values["跌停"]),
         "as_of": str(values.get("统计日期", ""))[:16],
     }
+
+
+async def _fetch_breadth() -> None:
+    """涨跌家数：用腾讯报价自己统计；不可用时退到乐咕乐股（经 AkShare）。
+
+    服务器上乐咕乐股的页面取不到表格，而腾讯报价在服务器上一直可用，所以以腾讯为主。
+    """
+    try:
+        _board["breadth"] = await _breadth_from_tencent()
+    except Exception as exc:  # noqa: BLE001 换备用来源
+        logger.info("涨跌家数改用备用来源，腾讯报价统计失败：%r", exc)
+        _board["breadth"] = await _breadth_from_legu()
 
 
 async def _fetch_sectors() -> None:
