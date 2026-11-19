@@ -35,7 +35,8 @@ SYSTEM_PROMPT = """你是面向内部投研团队的 A 股投研助手，用简�
 - 问大盘、指数走势、市场情绪或要求做市场复盘时，先调用 get_market_overview；复盘时再结合 get_market_news 和 get_policy。
 - 分析个股时可以组合多个工具（行情、财务、新闻），但只取回答问题真正需要的数据。
 - 工具返回"数据未获取"时，如实告诉用户哪些数据没有取到，再基于已有信息作答，不得编造。
-- 条件选股（按指标筛选股票）的工具尚未接入：遇到这类问题，说明暂时无法筛选，不得编造股票名单。"""
+- 条件选股用 screen_stocks：把用户的每个要求翻译成一个条件，股票名单只能来自工具结果，不得编造。用户的要求在可用字段里找不到对应时，明确告诉用户哪一条暂不支持，不要偷偷换成别的指标。
+- 解读选股结果时说明条件、符合的数量和数据时间，点评排在前面的几只，不要逐行复述表格。"""
 
 # 一次回答里最多让模型调用几轮工具，防止模型反复调用停不下来
 MAX_TOOL_ROUNDS = 4
@@ -53,21 +54,36 @@ class ChatIn(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
 
+def _estimate_tokens(text: str) -> int:
+    """粗估 token 数：中文等非 ASCII 字符按 1 个、ASCII 字符按 1/3 个算。
+
+    实际中文约 0.6–1 个 token，英文与 JSON 约 0.25–0.3 个，所以这个估算偏保守，不会超限。
+    """
+    wide = sum(1 for ch in text if ord(ch) > 127)
+    return wide + (len(text) - wide) // 3 + 1
+
+
+# 每次请求都会带上系统提示词和全部工具定义，它们也占上下文（工具定义约 2000 token）
+_FIXED_TOKENS = _estimate_tokens(SYSTEM_PROMPT) + _estimate_tokens(
+    json.dumps(TOOLS, ensure_ascii=False)
+)
+
+
 def _fit_history(newest_first: list[Message]) -> list[dict[str, str]]:
     """从最新的消息往前取，直到用完上下文预算；返回按时间正序排列的消息。
 
-    模型上下文有限，超出会被模型服务直接拒绝。这里把 1 个字符按 1 个 token 估算：
-    中文实际约 0.6–1 个 token，英文更少，所以这个估算只会偏保守，不会超限。
+    模型上下文有限，超出会被模型服务直接拒绝。预算 = 上下文长度 − 回答预留 − 工具结果预留
+    − 系统提示词与工具定义。
     """
     budget = (
         settings.llm_context_tokens
         - settings.llm_reserved_output_tokens
         - settings.llm_reserved_tool_tokens
-        - len(SYSTEM_PROMPT)
+        - _FIXED_TOKENS
     )
     kept: list[dict[str, str]] = []
     for message in newest_first:
-        budget -= len(message.content)
+        budget -= _estimate_tokens(message.content)
         # 最新一条（用户刚提的问题）无论多长都要带上
         if budget < 0 and kept:
             break

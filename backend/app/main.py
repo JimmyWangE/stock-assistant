@@ -14,7 +14,7 @@ from app.db import engine, redis
 from app.migrate import upgrade_database
 from app.overview import keep_board_fresh, router as overview_router
 from app.sessions.router import keep_purging_expired, router as sessions_router
-from app.tools import market
+from app.tools import market, screener
 
 
 # uvicorn 只配置了它自己的日志；不设这一行，本项目 INFO 级别的日志（如过期会话清理数量）不会输出
@@ -36,11 +36,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     purger = asyncio.create_task(keep_purging_expired())
     # 后台刷新页面上的市场看板
     board = asyncio.create_task(keep_board_fresh())
-    logging.getLogger("app").info("后台任务已启动：股票名称表刷新、过期会话清理、市场看板")
+    # 后台准备条件选股的财务数据和技术指标
+    screen = asyncio.create_task(screener.keep_screener_fresh())
+    logging.getLogger("app").info("后台任务已启动：股票名称表刷新、过期会话清理、市场看板、选股数据")
     yield
     refresher.cancel()
     purger.cancel()
     board.cancel()
+    screen.cancel()
 
 
 app = FastAPI(

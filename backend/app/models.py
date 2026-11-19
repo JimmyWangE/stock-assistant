@@ -46,3 +46,13 @@ class Message(Base):
     # 随回答展示的图表、表格的原始数据。存数据而不是图片：重开会话时按原样重画，即生成时的快照
     blocks: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ScreenData(Base):
+    """条件选股的数据快照。每类数据一行（financials、technicals），payload 为整份数据。"""
+
+    __tablename__ = "screen_data"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

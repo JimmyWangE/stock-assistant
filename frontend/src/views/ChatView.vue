@@ -45,7 +45,7 @@ const abilities = [
   { icon: Wallet, name: '财报解读', desc: '营收、利润、毛利率、ROE 逐期对比', ask: '解读一下贵州茅台最近的财报' },
   { icon: Notebook, name: '个股分析', desc: '行情、财务、新闻多维度综合', ask: '从基本面和走势两方面分析一下比亚迪' },
   { icon: Reading, name: '政策与新闻', desc: '部委官网原文与财经快讯', ask: '今天有哪些影响 A 股的重要政策和新闻' },
-  { icon: Filter, name: '条件选股', desc: '按估值、财务、行情等条件筛选', ask: '' },
+  { icon: Filter, name: '条件选股', desc: '按估值、财务、行情、技术、行业概念筛选', ask: '筛选市盈率低于 15、近三年 ROE 都高于 15% 的股票' },
 ]
 
 const greeting = computed(() => {

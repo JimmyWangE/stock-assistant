@@ -38,6 +38,14 @@ def _pick_tool(question: str) -> dict | None:
     """按关键词决定调用哪个工具；股票取问题里的 6 位代码，没有就用茅台。"""
     code = re.search(r"\d{6}", question)
     symbol = code.group() if code else "贵州茅台"
+    if "筛选" in question or "选股" in question:
+        return {
+            "name": "screen_stocks",
+            "arguments": json.dumps(
+                {"conditions": [{"field": "pe_ttm", "op": "between", "value": [0, 15]},
+                                {"field": "roe_min_3y", "op": ">", "value": 15}]}
+            ),
+        }
     if "复盘" in question or "大盘" in question or "指数" in question:
         return {"name": "get_market_overview", "arguments": json.dumps({})}
     if "K线" in question.upper() or "走势" in question:

@@ -5,7 +5,7 @@ import json
 import logging
 
 from app import overview
-from app.tools import fundamentals, market, news, policy
+from app.tools import fundamentals, market, news, policy, screener
 from app.tools.base import ToolError, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,44 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_stocks",
+            "description": (
+                "按条件筛选 A 股（条件选股），向用户展示结果表格。可用字段（单位）："
+                "估值 pe_ttm 市盈率TTM、pb 市净率、mktcap 总市值亿、float_mktcap 流通市值亿、dividend_yield 股息率%；"
+                "行情 price 元、pct_chg 今日涨跌幅%、turnover 换手率%、volume_ratio 量比、amount 成交额亿、main_inflow 主力净流入亿、"
+                "ret_5d/ret_20d/ret_60d/ret_ytd/ret_52w 区间涨跌幅%、from_high_52w 距52周高点%（≤0）；"
+                "技术 rsi14，以及布尔字段 ma_bull 均线多头排列、above_ma20/above_ma60 站上均线、macd_golden 近3日MACD金叉、new_high_52w 创52周新高；"
+                "财务 roe 最新报告期ROE%（累计未年化）、roe_annual 最新年报ROE%、roe_min_3y 近三年年报ROE最低值%（近三年都高于X用它）、"
+                "revenue_yoy 营收同比%、profit_yoy 净利润同比%、gross_margin 毛利率%、debt_ratio 资产负债率%、eps、bps"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "conditions": {
+                        "type": "array",
+                        "description": "条件之间是“且”的关系",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": {"type": "string", "enum": list(screener.FIELDS)},
+                                "op": {"type": "string", "enum": screener.OPS},
+                                "value": {"description": "数值；between 时为 [下限, 上限]；布尔字段填 true 或 false"},
+                            },
+                            "required": ["field", "op", "value"],
+                        },
+                    },
+                    "industry": {"type": "string", "description": "行业名，如 半导体、白酒、银行"},
+                    "concept": {"type": "string", "description": "概念名，如 人工智能、固态电池、低空经济"},
+                    "sort_by": {"type": "string", "enum": list(screener.FIELDS), "description": "排序字段，默认第一个数值条件"},
+                    "order": {"type": "string", "enum": ["desc", "asc"], "description": "默认随条件：低于类从低到高，高于类从高到低"},
+                    "limit": {"type": "integer", "description": "表格显示条数，1 到 50，默认 20"},
+                },
+            },
+        },
+    },
 ]
 
 _HANDLERS = {
@@ -127,6 +165,7 @@ _HANDLERS = {
     "get_market_news": news.get_market_news,
     "get_policy": policy.get_policy,
     "get_market_overview": overview.get_market_overview,
+    "screen_stocks": screener.screen_stocks,
 }
 
 # 工具执行期间显示给用户的状态
@@ -138,6 +177,7 @@ STATUS = {
     "get_market_news": "正在获取最新资讯…",
     "get_policy": "正在查阅官方政策发布…",
     "get_market_overview": "正在获取大盘概况…",
+    "screen_stocks": "正在按条件筛选股票…",
 }
 
 

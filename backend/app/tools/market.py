@@ -98,6 +98,66 @@ def _exchange_prefix(code: str) -> str:
     return "bj"
 
 
+async def fetch_quote_fields(codes: list[str]) -> list[list[str]]:
+    """批量取腾讯报价，返回每只股票按 ~ 切开的字段列表。codes 为带交易所前缀的代码。
+
+    每次 300 只、并发进行，全市场约 19 次请求，实测不到 1 秒。
+    常用字段：1 名称，2 代码，3 现价，4 昨收，6 成交量（手），30 时间，37 成交额（万元），
+    38 换手率，47 涨停价，48 跌停价，64 股息率，67 52 周最高，68 52 周最低。
+    """
+    async with httpx.AsyncClient(timeout=6) as client:
+
+        async def batch(chunk: list[str]) -> str:
+            resp = await client.get(f"https://qt.gtimg.cn/q={','.join(chunk)}")
+            resp.raise_for_status()
+            return resp.content.decode("gbk", errors="replace")
+
+        bodies = await asyncio.gather(
+            *(batch(codes[i : i + 300]) for i in range(0, len(codes), 300))
+        )
+    return [
+        line.split('"')[1].split("~")
+        for body in bodies
+        for line in body.split(";")
+        if '"' in line
+    ]
+
+
+# 腾讯日 K 接口的几个等价地址。腾讯防火墙会封禁短时间内请求过多的地址（返回 501 网页），
+# 被封时换下一个。实测某个地址被封后，其他地址仍可用
+_DAY_BAR_URLS = [
+    "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get?param={symbol},day,,,{count},qfq",
+    "https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get?param={symbol},day,,,{count},qfq",
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,{count},qfq",
+]
+_blocked_until: dict[int, float] = {}
+
+
+class SourceBlocked(Exception):
+    """所有日 K 地址都被数据源暂时封禁。"""
+
+
+async def fetch_day_bars(client: httpx.AsyncClient, symbol: str, count: int) -> list[list]:
+    """腾讯日 K（前复权）：每根 [日期, 开, 收, 高, 低, 成交量（手）, ...]。指数没有复权，返回原始日 K。"""
+    for i, url in enumerate(_DAY_BAR_URLS):
+        if _blocked_until.get(i, 0) > time.monotonic():
+            continue
+        resp = await client.get(url.format(symbol=symbol, count=count))
+        if resp.status_code == 501 or "waf.tencent.com" in resp.text[:300]:
+            # 这个地址被封，30 分钟内不再用
+            _blocked_until[i] = time.monotonic() + 1800
+            logger.warning("腾讯日 K 地址 %d 被限流，改用下一个", i)
+            continue
+        data = resp.json()["data"][symbol]
+        return data.get("qfqday") or data.get("day") or []
+    raise SourceBlocked("腾讯日 K 接口暂时都不可用")
+
+
+def all_codes() -> list[str]:
+    """名称表里全部股票的带交易所前缀的代码。"""
+    return [_exchange_prefix(code) + code for code in _table["by_code"]]
+
+
 def resolve_stock(symbol: str) -> tuple[str, str]:
     """把用户或模型给的"代码或简称"解析成（6 位代码，简称）。"""
     text = _normalize(symbol)

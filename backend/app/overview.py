@@ -131,47 +131,39 @@ def _bucket(percent: float) -> str:
     return "<-7%"
 
 
-def _market_stats(bodies: list[str]) -> tuple[dict, dict]:
-    """由全市场逐只报价统计涨跌家数、涨跌分布和各类排行。
-
-    腾讯报价字段：1 名称，2 代码，3 现价，4 昨收，6 成交量（手），37 成交额（万元），
-    38 换手率，47 涨停价，48 跌停价。
-    """
+def _market_stats(quotes: list[list[str]]) -> tuple[dict, dict]:
+    """由全市场逐只报价统计涨跌家数、涨跌分布和各类排行。字段含义见 market.fetch_quote_fields。"""
     rows: list[dict] = []
     limit_up = limit_down = 0
     counts = {label: 0 for label, _, _ in _BUCKETS}
     as_of = ""
-    for body in bodies:
-        for line in body.split(";"):
-            if '"' not in line:
-                continue
-            f = line.split('"')[1].split("~")
-            if len(f) < 49 or not f[3]:
-                continue
-            price, prev, volume = float(f[3]), float(f[4]), float(f[6] or 0)
-            # 没有成交的视为停牌，不计入统计
-            if price <= 0 or prev <= 0 or volume == 0:
-                continue
-            percent = round((price - prev) / prev * 100, 2)
-            is_up_limit = bool(f[47]) and price >= float(f[47])
-            is_down_limit = bool(f[48]) and price <= float(f[48])
-            if is_up_limit:
-                limit_up += 1
-            elif is_down_limit:
-                limit_down += 1
-            else:
-                counts[_bucket(percent)] += 1
-            rows.append(
-                {
-                    "code": f[2],
-                    "name": f[1],
-                    "price": price,
-                    "percent": percent,
-                    "amount_yi": round(float(f[37] or 0) / 1e4, 2),
-                    "turnover": float(f[38] or 0),
-                }
-            )
-            as_of = max(as_of, f[30])
+    for f in quotes:
+        if len(f) < 49 or not f[3]:
+            continue
+        price, prev, volume = float(f[3]), float(f[4]), float(f[6] or 0)
+        # 没有成交的视为停牌，不计入统计
+        if price <= 0 or prev <= 0 or volume == 0:
+            continue
+        percent = round((price - prev) / prev * 100, 2)
+        is_up_limit = bool(f[47]) and price >= float(f[47])
+        is_down_limit = bool(f[48]) and price <= float(f[48])
+        if is_up_limit:
+            limit_up += 1
+        elif is_down_limit:
+            limit_down += 1
+        else:
+            counts[_bucket(percent)] += 1
+        rows.append(
+            {
+                "code": f[2],
+                "name": f[1],
+                "price": price,
+                "percent": percent,
+                "amount_yi": round(float(f[37] or 0) / 1e4, 2),
+                "turnover": float(f[38] or 0),
+            }
+        )
+        as_of = max(as_of, f[30])
     if len(rows) < 1000:
         raise ValueError(f"只统计到 {len(rows)} 只股票，数据不完整")
 
@@ -203,19 +195,7 @@ def _market_stats(bodies: list[str]) -> tuple[dict, dict]:
 
 
 async def _market_from_tencent() -> tuple[dict, dict]:
-    codes = [market._exchange_prefix(code) + code for code in market._table["by_code"]]
-    async with httpx.AsyncClient(timeout=6) as client:
-
-        async def batch(chunk: list[str]) -> str:
-            resp = await client.get(f"https://qt.gtimg.cn/q={','.join(chunk)}")
-            resp.raise_for_status()
-            return resp.content.decode("gbk", errors="replace")
-
-        # 每次 300 只，全市场约 19 次请求，并发进行，实测不到 1 秒
-        bodies = await asyncio.gather(
-            *(batch(codes[i : i + 300]) for i in range(0, len(codes), 300))
-        )
-    return _market_stats(bodies)
+    return _market_stats(await market.fetch_quote_fields(market.all_codes()))
 
 
 async def _breadth_from_legu() -> dict:
@@ -396,15 +376,11 @@ async def index_detail(code: str, _: User = Depends(current_user)) -> dict:
         return hit[1]
     try:
         async with httpx.AsyncClient(timeout=6) as client:
-            minute_resp, day_resp = await asyncio.gather(
+            minute_resp, day_bars = await asyncio.gather(
                 client.get(f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}"),
-                client.get(
-                    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-                    f"?param={code},day,,,120,qfq"
-                ),
+                market.fetch_day_bars(client, code, 120),
             )
         minute = minute_resp.json()["data"][code]
-        day = day_resp.json()["data"][code]
         quote = minute["qt"][code]
         date = minute["data"]["date"]
         result = {
@@ -424,7 +400,7 @@ async def index_detail(code: str, _: User = Depends(current_user)) -> dict:
             # 与个股 K 线图同一格式：[日期, 开, 收, 低, 高, 成交量（股）]；接口给的成交量单位是手
             "bars": [
                 [d[0], float(d[1]), float(d[2]), float(d[4]), float(d[3]), float(d[5]) * 100]
-                for d in day.get("day") or day.get("qfqday") or []
+                for d in day_bars
             ],
             "source": {"name": "腾讯财经", "url": f"https://gu.qq.com/{code}/zs"},
         }
