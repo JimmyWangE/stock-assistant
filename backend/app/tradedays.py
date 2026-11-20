@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 import akshare as ak
 
+from app import jsengine
 from app.tools.market import SHANGHAI
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ _lock = asyncio.Lock()
 
 
 def _fetch() -> set[str]:
-    df = ak.calendar_trade_date_hist_sina()
+    df = jsengine.call(ak.calendar_trade_date_hist_sina)
     return {str(d)[:10] for d in df["trade_date"]}
 
 

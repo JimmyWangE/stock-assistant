@@ -19,6 +19,7 @@ import akshare as ak
 import httpx
 import pandas as pd
 
+from app import jsengine
 from app.tools.base import ToolError, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -205,7 +206,8 @@ def _minute_bars(code: str, period: str, adjust: str = "") -> pd.DataFrame:
 
 
 def _day_bars(code: str, period: str, start: str, adjust: str) -> pd.DataFrame:
-    df = ak.stock_zh_a_hist_sina(
+    df = jsengine.call(
+        ak.stock_zh_a_hist_sina,
         symbol=_exchange_prefix(code) + code,
         period=period,
         start_date=start,

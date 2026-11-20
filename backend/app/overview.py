@@ -19,6 +19,7 @@ import httpx
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
+from app import jsengine
 from app.models import User
 from app.security import current_user
 from app.tools import market, policy
@@ -225,7 +226,7 @@ async def _fetch_market() -> None:
 
 async def _fetch_sectors() -> None:
     """同花顺行业板块：全部约 90 个行业的涨跌幅、资金净流入和领涨股。"""
-    df = await asyncio.to_thread(ak.stock_board_industry_summary_ths)
+    df = await asyncio.to_thread(jsengine.call, ak.stock_board_industry_summary_ths)
     df = df.sort_values("涨跌幅", ascending=False)
 
     def rows(part: pd.DataFrame) -> list[dict]:
@@ -467,11 +468,31 @@ async def get_market_overview() -> ToolResult:
     s = _board["sectors"]
     if s:
         fmt = lambda r: f"{r['name']}（{r['percent']:+.2f}%，净流入 {r['inflow_yi']:+.1f} 亿，领涨 {r['leader']}）"  # noqa: E731
-        lines.append("行业领涨：" + "，".join(fmt(r) for r in s["top"][:5]))
-        lines.append("行业领跌：" + "，".join(fmt(r) for r in s["bottom"][:5]))
-        inflow = sorted(s["all"], key=lambda r: r["inflow_yi"], reverse=True)
-        lines.append("行业资金净流入前三：" + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[:3]))
-        lines.append("行业资金净流出前三：" + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[::-1][:3]))
+        # 排名和"最强/最弱"由程序写明。服务器实测：保险涨幅第一、银行第二，模型却写"银行板块表现最强"
+        every = s["all"]
+        rising = sum(1 for r in every if r["percent"] > 0)
+        falling = sum(1 for r in every if r["percent"] < 0)
+        best, worst = s["top"][0], s["bottom"][0]
+        lines.append(
+            f"行业板块共 {len(every)} 个，上涨 {rising} 个、下跌 {falling} 个。"
+            f"按涨跌幅，今日表现最强的行业是 {best['name']}（{best['percent']:+.2f}%），"
+            f"最弱的是 {worst['name']}（{worst['percent']:+.2f}%）"
+        )
+        lines.append(
+            "行业涨跌幅从高到低第 1 至 5 名："
+            + "，".join(f"第 {i} 名 {fmt(r)}" for i, r in enumerate(s["top"][:5], 1))
+        )
+        lines.append(
+            "行业涨跌幅从低到高第 1 至 5 名："
+            + "，".join(f"第 {i} 名 {fmt(r)}" for i, r in enumerate(s["bottom"][:5], 1))
+        )
+        inflow = sorted(every, key=lambda r: r["inflow_yi"], reverse=True)
+        lines.append(
+            "按资金净流入排序（与涨跌幅排名无关）：净流入最多的三个行业 "
+            + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[:3])
+            + "；净流出最多的三个行业 "
+            + "，".join(f"{r['name']} {r['inflow_yi']:+.1f} 亿" for r in inflow[::-1][:3])
+        )
     lines.append(
         "来源（请原样写在回答末尾）：[腾讯财经·沪深行情](https://gu.qq.com/sh000001/zs)、"
         "[同花顺·行业板块](https://q.10jqka.com.cn/thshy/)"
