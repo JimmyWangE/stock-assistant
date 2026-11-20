@@ -674,7 +674,7 @@ async def screen_stocks(
     lines = [
         f"条件选股结果：在 {total} 只股票中，共 {len(df)} 只满足全部条件（{rule}），{order_text}。",
         "；".join(notes) + "。",
-        "完整结果表格已展示给用户，不要逐行复述。下面是排在前面的股票，供你解读：",
+        "完整结果表格已展示给用户，不要再用表格或逐行列出这些股票；用几句话概括特征，点名两三只做简评。下面是排在前面的股票，供你解读：",
     ]
     for code, r in shown.head(10).iterrows():
         lines.append(

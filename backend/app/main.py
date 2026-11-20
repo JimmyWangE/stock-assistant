@@ -85,12 +85,19 @@ async def health() -> dict:
         result["redis"] = {"status": "error", "detail": str(exc)[:200]}
 
     try:
-        models = await llm.list_models()
+        cards = await llm.model_cards()
+        limits = [c["max_model_len"] for c in cards if c.get("max_model_len")]
         result["llm"] = {
             "status": "ok",
-            "models": models,
+            "models": [c["id"] for c in cards],
             "api_key_loaded": bool(settings.read_llm_api_key()),
+            # 模型服务允许的上下文长度与本项目配置的值；配置不能大于服务的值，否则长对话会被拒绝
+            "max_model_len": min(limits) if limits else None,
+            "context_tokens": settings.llm_context_tokens,
         }
+        if limits and settings.llm_context_tokens > min(limits):
+            result["llm"]["status"] = "error"
+            result["llm"]["detail"] = "LLM_CONTEXT_TOKENS 大于模型服务的 max_model_len，请调小"
     except Exception as exc:  # noqa: BLE001
         result["llm"] = {
             "status": "error",

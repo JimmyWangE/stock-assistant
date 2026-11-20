@@ -17,12 +17,17 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-async def list_models() -> list[str]:
-    """返回模型服务上可用的模型名，用于健康检查和自动发现模型名。"""
+async def model_cards() -> list[dict]:
+    """模型服务 /models 的原始返回。vLLM 会在其中给出 max_model_len（模型服务允许的上下文长度）。"""
     async with httpx.AsyncClient(base_url=settings.llm_base_url, timeout=5) as client:
         resp = await client.get("/models", headers=_headers())
         resp.raise_for_status()
-        return [m["id"] for m in resp.json().get("data", [])]
+        return resp.json().get("data", [])
+
+
+async def list_models() -> list[str]:
+    """返回模型服务上可用的模型名，用于健康检查和自动发现模型名。"""
+    return [m["id"] for m in await model_cards()]
 
 
 async def resolve_model() -> str:

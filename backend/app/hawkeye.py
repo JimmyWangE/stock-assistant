@@ -38,6 +38,7 @@ _FOLLOW_UP = re.compile(
 
 # （类别，标题规则，分值）。同一只股票命中多条时取各类别最高分相加
 _POSITIVE: list[tuple[str, re.Pattern, int]] = [
+    # 担保、借款、授信、租赁类"合同"不是经营利好（服务器实测"签署最高额保证合同"被误判）
     ("重大合同/中标", re.compile(r"中标|签订.*合同|重大合同|签署.*(合同|订单)"), 20),
     ("重组/收购", re.compile(r"(重大资产重组|发行股份购买资产).*(预案|草案)|收购.*控制权|控制权.*变更|筹划.*(重组|收购)"), 20),
     # 临床试验获批要排在"获批"前面，否则会被当成上市获批
@@ -50,6 +51,9 @@ _POSITIVE: list[tuple[str, re.Pattern, int]] = [
 _NEGATIVE = re.compile(
     r"减持|立案|行政处罚|警示函|监管函|风险提示|退市|重大诉讼|被冻结|业绩预亏|预减|首亏|终止(收购|重组|发行)"
 )
+
+# 标题里有"合同""协议"但不是经营订单的公告
+_NOT_BUSINESS = re.compile(r"担保|保证合同|借款|授信|贷款|融资|租赁|委托理财|关联交易|募集资金")
 
 _cache: tuple[float, dict] | None = None
 _lock = asyncio.Lock()
@@ -125,7 +129,7 @@ def _catalysts(notices: pd.DataFrame, forecasts: pd.DataFrame) -> dict[str, dict
         if _NEGATIVE.search(body):
             entry(code, row["名称"])["warnings"].append({"title": body, "url": row["网址"]})
             continue
-        if _FOLLOW_UP.search(body):
+        if _FOLLOW_UP.search(body) or _NOT_BUSINESS.search(body):
             continue
         for kind, pattern, score in _POSITIVE:
             if pattern.search(body):
