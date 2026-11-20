@@ -42,6 +42,33 @@ def _financial_url(code: str) -> str:
     )
 
 
+def _direction(by_name: pd.DataFrame, period: str) -> str:
+    """把"盈利还是亏损""同比增还是减"由程序写明，不交给模型推断。
+
+    服务器实测：归母净利润 644.67 亿元、同比 −0.25%，模型却说成"净利润已转负"。
+    """
+    lines = []
+    for amount, growth, label in (
+        ("营业总收入", "营业总收入增长率", "营收"),
+        ("归母净利润", "归属母公司净利润增长率", "归母净利润"),
+    ):
+        if amount not in by_name.index:
+            continue
+        value = pd.to_numeric(by_name.at[amount, period], errors="coerce")
+        change = pd.to_numeric(by_name.at[growth, period], errors="coerce") if growth in by_name.index else None
+        if pd.isna(value):
+            continue
+        state = "" if label == "营收" else ("，为盈利" if value > 0 else "，为亏损")
+        part = f"{label} {value / 1e8:,.2f} 亿元{state}"
+        if change is not None and not pd.isna(change):
+            word = "增长" if change > 0 else "下降" if change < 0 else "持平"
+            part += f"，同比{word} {abs(change):.2f}%"
+            if label == "归母净利润" and change < 0 and value > 0:
+                part += "（利润仍为正，只是比上年同期少，不是亏损）"
+        lines.append(part)
+    return ("最新一期要点：" + "；".join(lines) + "。\n") if lines else ""
+
+
 async def get_financials(symbol: str, periods: int = 6) -> ToolResult:
     periods = max(2, min(int(periods), 8))
     code, name = resolve_stock(symbol)
@@ -78,7 +105,8 @@ async def get_financials(symbol: str, periods: int = 6) -> ToolResult:
     table = "\n".join(" | ".join(row) for row in [columns, *rows])
     text = (
         f"{title}，最新报告期 {columns[1]}。{note}。\n"
-        f"这张表已由系统展示给用户，不必完整复述，重点做解读。\n{table}\n"
+        + _direction(by_name, period_cols[0])
+        + f"这张表已由系统展示给用户，回答里不要再画表格，重点做解读。\n{table}\n"
         + _cite("新浪财经", f"{name}（{code}）财务摘要", _financial_url(code))
     )
     return ToolResult(text=text, blocks=[block])
