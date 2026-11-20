@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { MagicStick, Promotion } from '@element-plus/icons-vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import type { NewsRow, SectorRow, StockRow } from '../api'
+import { reportApi, type NewsRow, type Report, type SectorRow, type StockRow } from '../api'
 import DistributionChart from '../components/DistributionChart.vue'
+import MarkdownView from '../components/MarkdownView.vue'
 import Sparkline from '../components/Sparkline.vue'
 import { board, openIndex, signed, todayLabel, trend, yi } from '../market'
 
@@ -67,9 +68,25 @@ const ranks = computed(() => [
   { key: 'active', title: '成交额榜', rows: market.value?.active ?? [] },
 ])
 
-function askStock(row: StockRow): void {
-  ask(`分析一下${row.name}（${row.code}）今天的表现和原因`)
+function openStock(row: StockRow): void {
+  router.push(`/stock/${row.code}`)
 }
+
+/** 最近一份 AI 报告（早报或收盘复盘），首页只展示第一部分（看点/要点）。 */
+const report = ref<Report | null>(null)
+onMounted(async () => {
+  try {
+    report.value = (await reportApi.latest()).report
+  } catch {
+    // 报告只是辅助信息
+  }
+})
+const highlight = computed(() => {
+  const sections = (report.value?.content ?? '').split(/\n(?=## )/)
+  const first = sections.find((p) => p.startsWith('## ')) ?? sections[0] ?? ''
+  const [heading, ...rest] = first.split('\n')
+  return { title: heading.replace(/^##\s*/, ''), body: rest.join('\n').trim() }
+})
 
 function askNews(item: NewsRow, kind: 'news' | 'policy'): void {
   ask(
@@ -139,6 +156,19 @@ function review(): void {
           />
           <span class="ic-amount">成交 {{ yi(item.amount_yi) }}</span>
         </button>
+      </section>
+
+      <!-- 最近一份 AI 报告 -->
+      <section v-if="report" class="card report-card">
+        <h2>
+          <span>
+            <span class="kind" :class="report.kind">{{ report.kind === 'morning' ? '早报' : '复盘' }}</span>
+            {{ report.title }} · {{ highlight.title }}
+          </span>
+          <router-link :to="`/reports/${report.date}/${report.kind}`" class="more">阅读全文 ›</router-link>
+        </h2>
+        <!-- 只展示第一部分；模型没按结构输出时内容可能很长，限高并渐隐 -->
+        <MarkdownView :content="highlight.body" class="report-body" />
       </section>
 
       <div class="grid-3">
@@ -219,13 +249,13 @@ function review(): void {
       <!-- 个股排行 -->
       <div v-if="market" class="grid-3">
         <section v-for="r in ranks" :key="r.key" class="card">
-          <h2>{{ r.title }}<span class="meta">点击让 AI 分析</span></h2>
+          <h2>{{ r.title }}<span class="meta">点击查看个股详情</span></h2>
           <table class="rank">
             <thead>
               <tr><th>名称</th><th>最新价</th><th>涨跌幅</th><th>成交额</th></tr>
             </thead>
             <tbody>
-              <tr v-for="row in r.rows" :key="row.code" tabindex="0" @click="askStock(row)" @keydown.enter="askStock(row)">
+              <tr v-for="row in r.rows" :key="row.code" tabindex="0" @click="openStock(row)" @keydown.enter="openStock(row)">
                 <td><span class="stock-name">{{ row.name }}</span><span class="stock-code">{{ row.code }}</span></td>
                 <td>{{ row.price.toFixed(2) }}</td>
                 <td :class="trend(row.percent)">{{ signed(row.percent) }}%</td>
@@ -277,6 +307,39 @@ function review(): void {
   max-width: 1480px;
   margin: 0 auto;
   padding: 18px 24px 24px;
+}
+.report-card h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.report-card .kind {
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 20px;
+}
+.report-card .kind.morning {
+  background: #fdf3e1;
+  color: #9a6b14;
+}
+.report-card .kind.close {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.report-card .more {
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+}
+.report-body {
+  max-height: 220px;
+  overflow: hidden;
+  font-size: 14px;
+  mask-image: linear-gradient(to bottom, #000 170px, transparent 220px);
 }
 .page-head {
   display: flex;

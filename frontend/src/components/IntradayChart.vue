@@ -21,7 +21,15 @@ use([
 ])
 
 // 分时图：点位一条线，下方成交量柱。虚线是昨收。
-const props = defineProps<{ minutes: [string, number, number][]; prevClose: number }>()
+// priceLabel：指数叫"点位"，个股叫"价格"
+const props = defineProps<{ minutes: [string, number, number][]; prevClose: number; priceLabel?: string }>()
+
+/** 成交量（手）：按大小换成手、万手、亿手。 */
+function lots(v: number, unit = '手'): string {
+  if (v >= 1e8) return `${(v / 1e8).toFixed(1)}亿${unit}`
+  if (v >= 1e4) return `${(v / 1e4).toFixed(1)}万${unit}`
+  return `${Math.round(v)}${unit}`
+}
 
 const UP = '#d83a3a'
 const DOWN = '#12915a'
@@ -83,7 +91,7 @@ function render(): void {
           const vol = volumes[i]?.value ?? 0
           const row = (k: string, v: string) =>
             `<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:${INK_MUTED}">${k}</span><span style="font-variant-numeric:tabular-nums">${v}</span></div>`
-          return `<b>${axis[i]}</b>${row('点位', price.toFixed(2))}${row('涨跌幅', pct(price))}${row('成交量', `${(vol / 1e4).toFixed(1)} 万手`)}`
+          return `<b>${axis[i]}</b>${row(props.priceLabel ?? '点位', price.toFixed(2))}${row('涨跌幅', pct(price))}${row('成交量', lots(vol))}`
         },
       },
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
@@ -121,14 +129,15 @@ function render(): void {
             fontSize: 11,
             showMinLabel: false,
             showMaxLabel: false,
-            formatter: (v: number) => v.toFixed(0),
+            // 低价股的刻度要保留小数，否则几个刻度都显示成同一个整数
+            formatter: (v: number) => v.toFixed(props.prevClose < 100 ? 2 : 0),
           },
           splitLine: { lineStyle: { color: GRID_LINE } },
         },
         {
           gridIndex: 1,
           splitNumber: 2,
-          axisLabel: { color: INK_MUTED, fontSize: 11, formatter: (v: number) => `${(v / 1e4).toFixed(0)}万` },
+          axisLabel: { color: INK_MUTED, fontSize: 11, formatter: (v: number) => lots(v, '') },
           splitLine: { show: false },
         },
       ],

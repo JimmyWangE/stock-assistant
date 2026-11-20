@@ -4,7 +4,7 @@ import inspect
 import json
 import logging
 
-from app import overview
+from app import overview, stock
 from app.tools import fundamentals, market, news, policy, screener
 from app.tools.base import ToolError, ToolResult
 
@@ -157,6 +157,21 @@ TOOLS = [
     },
 ]
 
+TOOLS.append(
+    {
+        "type": "function",
+        "function": {
+            "name": "diagnose_stock",
+            "description": "诊股：对一只股票的基本面、估值、技术面、资金面、消息面打分（程序按固定规则计算），向用户展示评分卡",
+            "parameters": {
+                "type": "object",
+                "properties": {"symbol": _SYMBOL},
+                "required": ["symbol"],
+            },
+        },
+    }
+)
+
 _HANDLERS = {
     "get_stock_quote": market.get_stock_quote,
     "get_kline": market.get_kline,
@@ -166,6 +181,7 @@ _HANDLERS = {
     "get_policy": policy.get_policy,
     "get_market_overview": overview.get_market_overview,
     "screen_stocks": screener.screen_stocks,
+    "diagnose_stock": stock.diagnose_stock,
 }
 
 # 工具执行期间显示给用户的状态
@@ -178,6 +194,7 @@ STATUS = {
     "get_policy": "正在查阅官方政策发布…",
     "get_market_overview": "正在获取大盘概况…",
     "screen_stocks": "正在按条件筛选股票…",
+    "diagnose_stock": "正在诊断个股…",
 }
 
 

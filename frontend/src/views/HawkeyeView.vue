@@ -123,7 +123,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <div class="rank" :class="{ top: i < 3 }">{{ i + 1 }}</div>
             <div class="main">
               <div class="title-row">
-                <span class="name">{{ p.name }}</span>
+                <router-link :to="`/stock/${p.code}`" class="name">{{ p.name }}</router-link>
                 <span class="code">{{ p.code }}</span>
                 <span class="stars" :aria-label="`${p.stars} 星`">
                   <i v-for="n in 5" :key="n" :class="{ on: n <= p.stars }">★</i>
@@ -335,6 +335,11 @@ h2 span {
   color: var(--navy);
   font-size: 16px;
   font-weight: 600;
+  text-decoration: none;
+}
+.name:hover {
+  color: var(--brand);
+  text-decoration: underline;
 }
 .code {
   color: var(--text-muted);

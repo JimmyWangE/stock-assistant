@@ -21,6 +21,7 @@ import { currentUser, setUser } from '../auth'
 import { strategies } from '../strategies'
 import BrandMark from '../components/BrandMark.vue'
 import DataTable from '../components/DataTable.vue'
+import DiagnosisCard from '../components/DiagnosisCard.vue'
 import KlineChart from '../components/KlineChart.vue'
 import MarkdownView from '../components/MarkdownView.vue'
 import MarketPanel from '../components/MarketPanel.vue'
@@ -39,12 +40,12 @@ const status = ref('')
 const scroller = ref<HTMLElement>()
 let controller: AbortController | null = null
 
-// 首页的能力卡片：点一下直接用示例提问。条件选股尚未上线，只展示不可点
+// 首页的能力卡片：点一下把示例问题放进输入框；条件选股展开策略推荐
 const abilities = [
   { icon: TrendCharts, name: '行情查询', desc: '最新价、涨跌幅、成交，数据到秒', ask: '比亚迪现在的股价和今天的涨跌幅是多少' },
   { icon: DataAnalysis, name: 'K 线走势', desc: '分钟、日、周、月线与均线解读', ask: '看一下宁德时代的日K线，分析近期走势' },
   { icon: Wallet, name: '财报解读', desc: '营收、利润、毛利率、ROE 逐期对比', ask: '解读一下贵州茅台最近的财报' },
-  { icon: Notebook, name: '个股分析', desc: '行情、财务、新闻多维度综合', ask: '从基本面和走势两方面分析一下比亚迪' },
+  { icon: Notebook, name: 'AI 诊股', desc: '基本面、估值、技术、资金、消息五项打分', ask: '诊断一下比亚迪' },
   { icon: Reading, name: '政策与新闻', desc: '部委官网原文与财经快讯', ask: '今天有哪些影响 A 股的重要政策和新闻' },
   { icon: Filter, name: '条件选股', desc: '按估值、财务、行情、技术、行业概念筛选', ask: '筛选市盈率低于 15、近三年 ROE 都高于 15% 的股票' },
 ]
@@ -435,6 +436,7 @@ onBeforeUnmount(() => {
                   <QuoteCard v-if="block.type === 'quote'" :block="block" />
                   <KlineChart v-else-if="block.type === 'kline'" :block="block" />
                   <DataTable v-else-if="block.type === 'table'" :block="block" />
+                  <DiagnosisCard v-else-if="block.type === 'diagnosis'" :block="block" />
                 </template>
                 <MarkdownView
                   v-if="m.content"

@@ -13,6 +13,9 @@ from app.config import settings
 from app.db import engine, redis
 from app.migrate import upgrade_database
 from app.hawkeye import router as hawkeye_router
+from app.reports import keep_reports, router as reports_router
+from app.stock import router as stock_router
+from app.watchlist import keep_watching, router as watchlist_router
 from app.overview import keep_board_fresh, router as overview_router
 from app.sessions.router import keep_purging_expired, router as sessions_router
 from app.tools import market, screener
@@ -39,12 +42,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     board = asyncio.create_task(keep_board_fresh())
     # 后台准备条件选股的财务数据和技术指标
     screen = asyncio.create_task(screener.keep_screener_fresh())
-    logging.getLogger("app").info("后台任务已启动：股票名称表刷新、过期会话清理、市场看板、选股数据")
+    # 自选股异动提醒；顺带保证每个交易日 9:35 火眼金睛名单定格
+    watcher = asyncio.create_task(keep_watching())
+    # 每日早报与收盘复盘
+    reporter = asyncio.create_task(keep_reports())
+    tasks = [refresher, purger, board, screen, watcher, reporter]
+    logging.getLogger("app").info(
+        "后台任务已启动：股票名称表刷新、过期会话清理、市场看板、选股数据、自选股提醒、每日报告"
+    )
     yield
-    refresher.cancel()
-    purger.cancel()
-    board.cancel()
-    screen.cancel()
+    for task in tasks:
+        task.cancel()
 
 
 app = FastAPI(
@@ -58,6 +66,9 @@ app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(overview_router)
 app.include_router(hawkeye_router)
+app.include_router(stock_router)
+app.include_router(watchlist_router)
+app.include_router(reports_router)
 
 
 @app.get("/api/health/live")

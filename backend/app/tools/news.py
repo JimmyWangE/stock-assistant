@@ -24,15 +24,13 @@ def _lines(items: list[dict[str, str]]) -> str:
 _CITE_RULE = "引用某条新闻时，必须带上它的 Markdown 链接（原样照抄），并写明发布时间。"
 
 
-async def get_stock_news(symbol: str, limit: int = 6) -> ToolResult:
-    limit = max(1, min(int(limit), 10))
-    code, name = resolve_stock(symbol)
+async def get_stock_news_items(code: str, limit: int) -> list[dict[str, str]]:
+    """个股新闻，最新的在前。每条：title、url、time、source（前面带逗号）、summary。"""
     df = await _cached(("news", code), 120, lambda: ak.stock_news_em(symbol=code))
     if df is None or df.empty:
-        raise ToolError(f"没有查到 {name}（{code}）的相关新闻")
-
+        return []
     df = df.sort_values("发布时间", ascending=False).head(limit)
-    items = [
+    return [
         {
             "title": _clip(row["新闻标题"], 60),
             "url": str(row["新闻链接"]),
@@ -42,6 +40,14 @@ async def get_stock_news(symbol: str, limit: int = 6) -> ToolResult:
         }
         for _, row in df.iterrows()
     ]
+
+
+async def get_stock_news(symbol: str, limit: int = 6) -> ToolResult:
+    limit = max(1, min(int(limit), 10))
+    code, name = resolve_stock(symbol)
+    items = await get_stock_news_items(code, limit)
+    if not items:
+        raise ToolError(f"没有查到 {name}（{code}）的相关新闻")
     text = f"{name}（{code}）最近的 {len(items)} 条新闻（来源：东方财富）。{_CITE_RULE}\n{_lines(items)}"
     return ToolResult(text=text)
 

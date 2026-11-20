@@ -58,3 +58,14 @@ export function todayLabel(): string {
   const week = '日一二三四五六'[now.getUTCDay()]
   return `${now.getUTCFullYear()}年${now.getUTCMonth() + 1}月${now.getUTCDate()}日 星期${week}`
 }
+
+/** ISO 时间按北京时间显示：今天的只显示时分，否则显示"月-日 时:分"。不随用户电脑的时区变化。 */
+export function beijingTime(iso: string, withDate = false): string {
+  const shift = (t: number) => new Date(t + 8 * 3600_000)
+  const d = shift(new Date(iso).getTime())
+  const today = shift(Date.now())
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const hm = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  const sameDay = d.toISOString().slice(0, 10) === today.toISOString().slice(0, 10)
+  return sameDay && !withDate ? hm : `${d.getUTCMonth() + 1}月${d.getUTCDate()}日 ${hm}`
+}

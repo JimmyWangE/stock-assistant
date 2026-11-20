@@ -127,8 +127,32 @@ export interface QuoteBlock {
   source: { name: string; url: string }
 }
 
+/** 诊股评分的一项。delta 为该条依据的加减分，0 表示只作参考。score 为 null 表示没有数据。 */
+export interface DiagnosisDimension {
+  name: string
+  score: number | null
+  level: string
+  items: { text: string; delta: number }[]
+  note: string
+}
+
+/** 诊股评分卡。 */
+export interface DiagnosisBlock {
+  type: 'diagnosis'
+  code: string
+  name: string
+  industry: string
+  price: number | null
+  percent: number | null
+  as_of: string
+  score: number | null
+  level: string
+  dimensions: DiagnosisDimension[]
+  disclaimer: string
+}
+
 /** 随回答展示、不经过模型的内容块。 */
-export type Block = KlineBlock | TableBlock | QuoteBlock
+export type Block = KlineBlock | TableBlock | QuoteBlock | DiagnosisBlock
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -295,4 +319,127 @@ export interface HawkeyeDay {
 export const hawkeyeApi = {
   today: () => request<HawkeyeResult>('GET', '/api/hawkeye'),
   history: () => request<HawkeyeDay[]>('GET', '/api/hawkeye/history'),
+}
+
+/** 个股行情与估值。数值取不到时为 null。 */
+export interface StockQuote {
+  code: string
+  name: string
+  price: number | null
+  prev_close: number | null
+  open: number | null
+  volume_lots: number | null
+  change: number | null
+  percent: number | null
+  high: number | null
+  low: number | null
+  amount_yi: number
+  turnover: number | null
+  pe_ttm: number | null
+  amplitude: number | null
+  /** 亿元 */
+  float_mktcap: number | null
+  /** 亿元 */
+  mktcap: number | null
+  pb: number | null
+  limit_up: number | null
+  limit_down: number | null
+  volume_ratio: number | null
+  dividend_yield: number | null
+  high_52w: number | null
+  low_52w: number | null
+  as_of: string
+}
+
+export interface StockProfile extends StockQuote {
+  industry: string
+  date: string
+  /** 每分钟 [时间, 价格, 成交量（手）] */
+  minutes: [string, number, number][]
+  bars: KlineBlock['bars']
+  source: { name: string; url: string }
+}
+
+export interface Announcement {
+  code: string
+  name: string
+  id: string
+  title: string
+  date: string
+  time: string
+  type: string
+  url: string
+}
+
+export interface StockNewsItem {
+  title: string
+  url: string
+  time: string
+  source: string
+  summary: string
+}
+
+export const stockApi = {
+  search: (q: string) =>
+    request<{ code: string; name: string }[]>('GET', `/api/stock/search?q=${encodeURIComponent(q)}`),
+  profile: (code: string) => request<StockProfile>('GET', `/api/stock/${encodeURIComponent(code)}`),
+  financials: (code: string) =>
+    request<TableBlock>('GET', `/api/stock/${encodeURIComponent(code)}/financials`),
+  news: (code: string) =>
+    request<{ announcements: Announcement[]; news: StockNewsItem[]; errors: string[] }>(
+      'GET',
+      `/api/stock/${encodeURIComponent(code)}/news`,
+    ),
+  diagnosis: (code: string) =>
+    request<DiagnosisBlock>('GET', `/api/stock/${encodeURIComponent(code)}/diagnosis`),
+}
+
+export interface WatchItem {
+  code: string
+  name: string
+  /** 涨跌幅提醒阈值（%） */
+  alert_pct: number
+  quote: StockQuote | null
+}
+
+export interface AlertItem {
+  id: number
+  code: string
+  name: string
+  kind: string
+  message: string
+  url: string | null
+  read: boolean
+  created_at: string
+}
+
+export const watchApi = {
+  list: () => request<WatchItem[]>('GET', '/api/watchlist'),
+  add: (symbol: string) => request<WatchItem>('POST', '/api/watchlist', { symbol }),
+  remove: (code: string) => send('DELETE', `/api/watchlist/${encodeURIComponent(code)}`),
+  setThreshold: (code: string, alertPct: number) =>
+    request<WatchItem>('PATCH', `/api/watchlist/${encodeURIComponent(code)}`, { alert_pct: alertPct }),
+  alerts: () => request<{ unread: number; items: AlertItem[] }>('GET', '/api/alerts'),
+  markRead: () => request<unknown>('POST', '/api/alerts/read'),
+}
+
+export interface ReportSummary {
+  date: string
+  kind: 'morning' | 'close'
+  title: string
+  created_at: string
+  summary?: string
+}
+
+export interface Report extends ReportSummary {
+  content: string
+  /** 生成报告时交给模型的数据原文 */
+  facts: string
+}
+
+export const reportApi = {
+  list: () => request<ReportSummary[]>('GET', '/api/reports'),
+  latest: () => request<{ report: Report | null }>('GET', '/api/reports/latest'),
+  get: (date: string, kind: string) =>
+    request<Report>('GET', `/api/reports/${encodeURIComponent(date)}/${encodeURIComponent(kind)}`),
 }

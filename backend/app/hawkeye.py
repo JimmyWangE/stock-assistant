@@ -289,9 +289,9 @@ async def _freeze(result: dict) -> None:
         logger.info("火眼金睛 %s 定格 %d 只", name[len(_FREEZE_PREFIX):], len(picks))
 
 
-@router.get("")
-async def today(_: User = Depends(current_user)) -> dict:
-    """今日名单。60 秒内复用上一次的计算结果。"""
+async def latest() -> dict:
+    """今日名单。60 秒内复用上一次的计算结果。自选股提醒的后台任务也调用它，
+    这样即使当天没人打开火眼金睛页面，9:35 的名单也会定格存库。"""
     global _cache
     async with _lock:
         if _cache is None or time.monotonic() - _cache[0] > 60:
@@ -302,6 +302,11 @@ async def today(_: User = Depends(current_user)) -> dict:
             except Exception:  # noqa: BLE001 定格失败不影响当天展示
                 logger.exception("火眼金睛定格失败")
         return _cache[1]
+
+
+@router.get("")
+async def today(_: User = Depends(current_user)) -> dict:
+    return await latest()
 
 
 @router.get("/history")

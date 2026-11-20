@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { ArrowDown, ChatLineSquare, DataBoard, Aim, SwitchButton } from '@element-plus/icons-vue'
+import {
+  Aim,
+  ArrowDown,
+  ChatLineSquare,
+  DataBoard,
+  Document,
+  Star,
+  SwitchButton,
+} from '@element-plus/icons-vue'
 
 import { currentUser } from '../auth'
 import { board, openIndex, signed, trend } from '../market'
+import AlertBell from './AlertBell.vue'
 import BrandMark from './BrandMark.vue'
+import StockSearch from './StockSearch.vue'
 
 defineEmits<{ logout: [] }>()
 </script>
@@ -29,8 +39,14 @@ defineEmits<{ logout: [] }>()
       >
         <el-icon><ChatLineSquare /></el-icon>智能投研
       </router-link>
+      <router-link to="/watchlist" class="tab" active-class="active">
+        <el-icon><Star /></el-icon>自选股
+      </router-link>
       <router-link to="/hawkeye" class="tab" active-class="active">
         <el-icon><Aim /></el-icon>火眼金睛
+      </router-link>
+      <router-link to="/reports" class="tab" active-class="active">
+        <el-icon><Document /></el-icon>每日报告
       </router-link>
     </nav>
 
@@ -48,9 +64,11 @@ defineEmits<{ logout: [] }>()
     <div v-else class="ticker" />
 
     <div class="right">
+      <StockSearch />
       <span v-if="board?.session" class="session" :class="{ open: board.session === '交易中' }">
         <span class="dot" />{{ board.session }}
       </span>
+      <AlertBell />
       <el-dropdown trigger="click" @command="$emit('logout')">
         <button type="button" class="user">
           <span class="avatar" aria-hidden="true">{{
@@ -139,15 +157,15 @@ defineEmits<{ logout: [] }>()
 }
 .tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
 }
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 52px;
-  padding: 0 12px;
+  padding: 0 10px;
   border-bottom: 2px solid transparent;
   box-sizing: border-box;
   color: var(--on-navy-muted);
@@ -183,7 +201,7 @@ defineEmits<{ logout: [] }>()
 .right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   flex-shrink: 0;
 }
 .session {
@@ -238,6 +256,13 @@ defineEmits<{ logout: [] }>()
   color: var(--navy);
   font-size: 12px;
   font-weight: 700;
+}
+/* 窄屏时只留头像，给指数行情条让出位置 */
+@media (max-width: 1360px) {
+  .username,
+  .session {
+    display: none;
+  }
 }
 .username {
   max-width: 120px;

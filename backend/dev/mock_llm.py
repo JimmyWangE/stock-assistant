@@ -38,6 +38,8 @@ def _pick_tool(question: str) -> dict | None:
     """按关键词决定调用哪个工具；股票取问题里的 6 位代码，没有就用茅台。"""
     code = re.search(r"\d{6}", question)
     symbol = code.group() if code else "贵州茅台"
+    if "诊断" in question or "诊股" in question:
+        return {"name": "diagnose_stock", "arguments": json.dumps({"symbol": symbol})}
     if "筛选" in question or "选股" in question:
         return {
             "name": "screen_stocks",

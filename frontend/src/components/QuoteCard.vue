@@ -26,7 +26,7 @@ const volume = computed(() => {
   <figure class="quote">
     <div class="head">
       <div>
-        <span class="name">{{ block.name }}</span>
+        <router-link :to="`/stock/${block.code}`" class="name">{{ block.name }}</router-link>
         <span class="code">{{ block.code }}</span>
       </div>
       <span class="as-of">{{ block.as_of }}</span>
@@ -91,6 +91,11 @@ const volume = computed(() => {
   color: var(--navy);
   font-size: 16px;
   font-weight: 600;
+  text-decoration: none;
+}
+.name:hover {
+  color: var(--brand);
+  text-decoration: underline;
 }
 .code {
   margin-left: 8px;

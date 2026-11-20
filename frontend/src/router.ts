@@ -17,6 +17,10 @@ export const router = createRouter({
         // 新对话可带 ?q=问题，进入后自动提问（概览页、指数详情里的"AI 解读"用）
         { path: 'chat', name: 'new-chat', component: () => import('./views/ChatView.vue') },
         { path: 'hawkeye', name: 'hawkeye', component: () => import('./views/HawkeyeView.vue') },
+        { path: 'stock/:code', name: 'stock', component: () => import('./views/StockView.vue') },
+        { path: 'watchlist', name: 'watchlist', component: () => import('./views/WatchlistView.vue') },
+        { path: 'reports', name: 'reports', component: () => import('./views/ReportsView.vue') },
+        { path: 'reports/:date/:kind', name: 'report', component: () => import('./views/ReportsView.vue') },
         { path: 'c/:id', name: 'chat', component: () => import('./views/ChatView.vue') },
       ],
     },

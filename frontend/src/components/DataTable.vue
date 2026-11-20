@@ -2,6 +2,11 @@
 import type { TableBlock } from '../api'
 
 defineProps<{ block: TableBlock }>()
+
+/** 选股结果等表格的行名形如"贵州茅台（600519）"，取出代码做成个股详情链接。 */
+function stockCode(cell: string): string | null {
+  return /（(\d{6})）$/.exec(cell)?.[1] ?? null
+}
 </script>
 
 <template>
@@ -17,7 +22,12 @@ defineProps<{ block: TableBlock }>()
         </thead>
         <tbody>
           <tr v-for="(row, r) in block.rows" :key="r">
-            <th scope="row">{{ row[0] }}</th>
+            <th scope="row">
+              <router-link v-if="stockCode(row[0])" :to="`/stock/${stockCode(row[0])}`" class="stock-link">{{
+                row[0]
+              }}</router-link>
+              <template v-else>{{ row[0] }}</template>
+            </th>
             <td v-for="(cell, c) in row.slice(1)" :key="c">{{ cell }}</td>
           </tr>
         </tbody>
@@ -35,6 +45,14 @@ defineProps<{ block: TableBlock }>()
 </template>
 
 <style scoped>
+.stock-link {
+  color: inherit;
+  text-decoration: none;
+}
+.stock-link:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
 .data-table {
   margin: 0 0 16px;
   padding: 14px 16px 12px;
